@@ -509,24 +509,24 @@
               ((featurep! :completion helm) #'+helm/project-search)))
 
       (:prefix ("]" . "next")
-        :desc "Decrease text size"          "["  #'text-scale-decrease
-        :desc "Next buffer"                 "b"  #'previous-buffer
-        :desc "Next diff Hunk"              "d"  #'git-gutter:previous-hunk
-        :desc "Next todo"                   "t"  #'hl-todo-previous
-        :desc "Next error"                  "e"  #'previous-error
-        :desc "Next workspace"              "w"  #'+workspace/switch-left
-        :desc "Next spelling error"         "s"  #'evil-prev-flyspell-error
-        :desc "Next spelling correction"    "S"  #'flyspell-correct-previous-word-generic)
+        :desc "Increase text size"          "]"  #'text-scale-increase
+        :desc "Next buffer"                 "b"  #'next-buffer
+        :desc "Next diff Hunk"              "d"  #'git-gutter:next-hunk
+        :desc "Next todo"                   "t"  #'hl-todo-next
+        :desc "Next error"                  "e"  #'next-error
+        :desc "Next workspace"              "w"  #'+workspace/switch-right
+        :desc "Next spelling error"         "s"  #'evil-next-flyspell-error
+        :desc "Next spelling correction"    "S"  #'flyspell-correct-next-word-generic)
 
       (:prefix ("[" . "previous")
-        :desc "Increase text size"          "]"  #'text-scale-increase
-        :desc "Buffer"                      "b"  #'next-buffer
-        :desc "Diff Hunk"                   "d"  #'git-gutter:next-hunk
-        :desc "Todo"                        "t"  #'hl-todo-next
-        :desc "Error"                       "e"  #'next-error
-        :desc "Workspace"                   "w"  #'+workspace/switch-right
-        :desc "Spelling error"              "s"  #'evil-next-flyspell-error
-        :desc "Spelling correction"         "S"  #'flyspell-correct-word-generic)
+        :desc "Decrease text size"            "["  #'text-scale-decrease
+        :desc "Previous buffer"               "b"  #'previous-buffer
+        :desc "Previous diff Hunk"            "d"  #'git-gutter:previous-hunk
+        :desc "Previous todo"                 "t"  #'hl-todo-previous
+        :desc "Previous error"                "e"  #'previous-error
+        :desc "Previous workspace"            "w"  #'+workspace/switch-left
+        :desc "Previous spelling error"       "s"  #'evil-prev-flyspell-error
+        :desc "Previous spelling correction"  "S"  #'flyspell-correct-word-generic)
 
       (:when (featurep! :feature workspaces)
         (:prefix ([tab] . "workspace")
@@ -629,7 +629,9 @@
           :desc "Git stage file"              "S"   #'magit-stage-file
           :desc "Git unstage file"            "U"   #'magit-unstage-file
           :desc "Magit push popup"            "p"   #'magit-push-popup
-          :desc "Magit pull popup"            "P"   #'magit-pull-popup)
+          :desc "Magit pull popup"            "P"   #'magit-pull-popup
+          (:when (featurep! :tools magit +forge)
+            :desc "Forge dispatch"               "F"   #'forge-dispatch))
         (:when (featurep! :tools gist)
           :desc "List gists"                  "G"   #'+gist:list))
 
@@ -662,7 +664,7 @@
         :desc "Man pages"                     "w"   #'+default/man-or-woman)
 
       (:prefix ("i" . "insert")
-        :desc "Insert from clipboard"         "y"   #'yank-pop
+        :desc "Insert from clipboard"         "y"   #'+default/yank-pop
         :desc "Insert from evil register"     "r"   #'evil-ex-registers
         :desc "Insert snippet"                "s"   #'yas-insert-snippet)
 
