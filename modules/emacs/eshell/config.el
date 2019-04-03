@@ -70,8 +70,6 @@ You should use `det-eshell-alias!' to change this.")
         eshell-glob-case-insensitive t
         eshell-error-if-no-glob t)
 
-  (add-to-list 'doom-detect-indentation-excluded-modes 'eshell-mode nil #'eq)
-
   ;; Consider eshell buffers real
   (add-hook 'eshell-mode-hook #'doom|mark-buffer-as-real)
 
@@ -107,7 +105,7 @@ You should use `det-eshell-alias!' to change this.")
   ;; Visual commands require a proper terminal. Eshell can't handle that, so
   ;; it delegates these commands to a term buffer.
   (after! em-term
-    (dolist (cmd '("tmux" "htop" "bash" "zsh" "fish" "vim" "nvim" "ncmpcpp"))
+    (dolist (cmd '("tmux" "htop" "vim" "nvim" "ncmpcpp"))
       (add-to-list 'eshell-visual-commands cmd)))
 
   (defun +eshell|init-aliases ()

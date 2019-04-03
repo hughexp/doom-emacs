@@ -17,6 +17,7 @@
   (defvar evil-mc-key-map (make-sparse-keymap))
   :config
   (global-evil-mc-mode +1)
+  (setq evil-mc-enable-bar-cursor (not (or IS-MAC IS-WINDOWS)))
 
   (after! smartparens
     ;; Make evil-mc cooperate with smartparens better
@@ -56,9 +57,7 @@
                                :evil-mc t))
 
 
-(def-package! multiple-cursors
-  :defer t
-  :config
+(after! multiple-cursors-core
   (setq mc/list-file (concat doom-etc-dir "mc-lists.el"))
 
   ;; TODO multiple-cursors config for Emacs users?

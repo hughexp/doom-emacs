@@ -52,7 +52,11 @@
     mode-name "JS2")
 
   (set-electric! 'js2-mode :chars '(?\} ?\) ?. ?:))
-  (set-repl-handler! 'js2-mode #'+javascript/repl)
+  (set-repl-handler! 'js2-mode #'+javascript/open-repl)
+
+  (after! projectile
+    (add-to-list 'projectile-project-root-files "package.json")
+    (add-to-list 'projectile-globally-ignored-directories "node_modules"))
 
   (map! :map js2-mode-map
         :localleader
@@ -73,7 +77,7 @@
   (add-to-list 'magic-mode-alist '(+javascript-jsx-file-p . rjsx-mode))
   :config
   (set-electric! 'rjsx-mode :chars '(?\} ?\) ?. ?>))
-  (when (featurep! :feature syntax-checker)
+  (when (featurep! :tools flycheck)
     (add-hook! 'rjsx-mode-hook
       ;; jshint doesn't know how to deal with jsx
       (push 'javascript-jshint flycheck-disabled-checkers)))
@@ -122,7 +126,12 @@
 ;;
 ;; Tools
 
+(when (featurep! +lsp)
+  (add-hook! (js2-mode rjsx-mode typescript-mode) #'lsp!))
+
+
 (def-package! tide
+  :unless (featurep! +lsp)
   :defer t
   :init
   ;; Don't let hard errors stop the user from opening js files.
@@ -152,13 +161,14 @@
   ;; navigation
   (set-lookup-handlers! 'tide-mode :async t
     :definition #'tide-jump-to-definition
-    :references #'tide-references
-    :documentation #'tide-documentation-at-point)
+    :references #'tide-references)
   ;; resolve to `doom-project-root' if `tide-project-root' fails
   (advice-add #'tide-project-root :override #'+javascript*tide-project-root)
   ;; cleanup tsserver when no tide buffers are left
   (add-hook! 'tide-mode-hook
     (add-hook 'kill-buffer-hook #'+javascript|cleanup-tide-processes nil t))
+
+  (define-key tide-mode-map [remap +lookup/documentation] #'tide-documentation-at-point)
 
   (map! :localleader
         :map tide-mode-map

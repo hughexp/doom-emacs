@@ -3,7 +3,14 @@
 
 ;; Installs a cutting-edge version of org-mode
 (package! org-plus-contrib)
-(package! org :ignore t) ; ignore org from ELPA
+
+;; Prevent built-in Org from playing into the byte-compilation of
+;; `org-plus-contrib'.
+(when-let* ((orglib (locate-library "org" nil doom-site-load-path)))
+  (setq load-path (delete (substring (file-name-directory orglib) 0 -1)
+                          load-path)))
+;; Ignore org on ELPA, if possible
+(package! org :ignore t)
 
 (package! org-bullets :recipe (:fetcher github :repo "Kaligule/org-bullets"))
 (package! org-yt :recipe (:fetcher github :repo "TobiasZawada/org-yt"))
@@ -41,6 +48,7 @@
     (package! ob-rust)))
 
 (when (featurep! +export)
+  (package! ox-clip)
   (package! ox-pandoc)
   (package! htmlize))
 
