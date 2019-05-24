@@ -54,7 +54,9 @@ true end of the line. The opposite of `doom/backward-to-bol-or-indent'."
                                  (end-of-visual-line)
                                (end-of-line))
                              (point))))
-    (if (and (sp-point-in-comment) (not (= (point) eol)))
+    (if (or (and (< (point) eol)
+                 (sp-point-in-comment))
+            (not (sp-point-in-comment eol)))
         (goto-char eol)
       (let* ((bol (save-excursion (beginning-of-visual-line) (point)))
              (boc (or (save-excursion
@@ -177,3 +179,13 @@ i.e. enables `ws-butler-mode' in the current buffer."
 
 i.e. disables `ws-butler-mode' in the current buffer."
   (ws-butler-mode -1))
+
+;;;###autoload
+(defun doom|enable-show-trailing-whitespace ()
+  "Enable `show-trailing-whitespace' in the current buffer."
+  (setq-local show-trailing-whitespace t))
+
+;;;###autoload
+(defun doom|disable-show-trailing-whitespace ()
+  "Disable `show-trailing-whitespace' in the current buffer."
+  (setq-local show-trailing-whitespace nil))

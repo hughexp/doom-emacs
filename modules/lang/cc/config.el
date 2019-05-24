@@ -112,21 +112,7 @@ This is ignored by ccls.")
              ;; another level
              (access-label . -)
              (inclass +cc-c++-lineup-inclass +)
-             (label . 0))))
-
-  ;;; Keybindings
-  ;; Smartparens and cc-mode both try to autoclose angle-brackets intelligently.
-  ;; The result isn't very intelligent (causes redundant characters), so just do
-  ;; it ourselves.
-  (define-key! c++-mode-map "<" nil ">" nil)
-  ;; ...and leave it to smartparens
-  (sp-with-modes '(c++-mode objc-mode)
-    (sp-local-pair "<" ">"
-                   :when '(+cc-sp-point-is-template-p +cc-sp-point-after-include-p)
-                   :post-handlers '(("| " "SPC"))))
-
-  (sp-with-modes '(c-mode c++-mode objc-mode java-mode)
-    (sp-local-pair "/*!" "*/" :post-handlers '(("||\n[i]" "RET") ("[d-1]< | " "SPC")))))
+             (label . 0)))))
 
 
 (def-package! modern-cpp-font-lock
@@ -226,8 +212,7 @@ This is ignored by ccls.")
   ;; Use rtags-imenu instead of imenu/counsel-imenu
   (define-key! (c-mode-map c++-mode-map) [remap imenu] #'+cc/imenu)
 
-  (when (featurep 'evil)
-    (add-hook 'rtags-jump-hook #'evil-set-jump))
+  (add-hook 'rtags-jump-hook #'better-jumper-set-jump)
   (add-hook 'rtags-after-find-file-hook #'recenter))
 
 
@@ -237,13 +222,14 @@ This is ignored by ccls.")
 (def-package! ccls
   :when (featurep! +lsp)
   :hook ((c-mode-local-vars c++-mode-local-vars objc-mode-local-vars) . +cc|init-ccls)
+  :init
+  (after! projectile
+    (add-to-list 'projectile-globally-ignored-directories ".ccls-cache")
+    (add-to-list 'projectile-project-root-files-bottom-up ".ccls-root")
+    (add-to-list 'projectile-project-root-files-top-down-recurring "compile_commands.json"))
   :config
   (defun +cc|init-ccls ()
     (setq-local company-transformers nil)
     (setq-local company-lsp-async t)
     (setq-local company-lsp-cache-candidates nil)
-    (lsp))
-  (after! projectile
-    (add-to-list 'projectile-globally-ignored-directories ".ccls-cache")
-    (add-to-list 'projectile-project-root-files-bottom-up ".ccls-root")
-    (add-to-list 'projectile-project-root-files-top-down-recurring "compile_commands.json")))
+    (lsp)))

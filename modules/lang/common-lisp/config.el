@@ -30,11 +30,10 @@
   (set-popup-rules!
     '(("^\\*sly-mrepl"       :vslot 2 :quit nil :ttl nil)
       ("^\\*sly-compilation" :vslot 3 :ttl nil)
-      ("^\\*sly-traces"      :vslot 4 :ttl nil)))
-
-  ;; Do not display debugger or inspector buffers in a popup window.
-  ;; These buffers are meant to be displayed with sufficient vertical space.
-  (set-popup-rule! "^\\*sly-\\(db\\|inspector\\)" :ignore t)
+      ("^\\*sly-traces"      :vslot 4 :ttl nil)
+      ;; Do not display debugger or inspector buffers in a popup window. These
+      ;; buffers are meant to be displayed with sufficient vertical space.
+      ("^\\*sly-\\(?:db\\|inspector\\)" :ignore t)))
 
   (sp-with-modes '(sly-mrepl-mode)
     (sp-local-pair "'" "'" :actions nil)
@@ -136,7 +135,7 @@ bin/doom while packages at compile-time (not a runtime though)."
           :desc "Toggle (fancy)" "T" #'sly-toggle-fancy-trace
           :desc "Untrace all" "u" #'sly-untrace-all))
 
-  (when (featurep! :feature evil +everywhere)
+  (when (featurep! :editor evil +everywhere)
     (add-hook 'sly-mode-hook #'evil-normalize-keymaps)
     (add-hook 'sly-popup-buffer-mode-hook #'evil-normalize-keymaps)
     (unless evil-move-beyond-eol

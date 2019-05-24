@@ -8,7 +8,8 @@
   :mode ("\\.\\(?:rb\\|rake\\|rabl\\|ru\\|builder\\|gemspec\\|jbuilder\\|thor\\)\\'" .  +ruby|init)
   :mode ("/\\(?:Berks\\|Cap\\|Gem\\|Guard\\|Pod\\|Puppet\\|Rake\\|Thor\\|Vagrant\\)file\\'" .  +ruby|init)
   :preface
-  (after! ruby-mode (require 'enh-ruby-mode))
+  (after! ruby-mode
+    (require 'enh-ruby-mode))
   (defun +ruby|init ()
     "Enable `enh-ruby-mode' if ruby is available, otherwise `ruby-mode'."
     (if (executable-find "ruby")
@@ -30,8 +31,13 @@
 
 
 (def-package! robe
-  :unless (featurep! +lsp)
-  :hook (enh-ruby-mode . robe-mode)
+  :defer t
+  :init
+  (defun +ruby|init-robe-mode-maybe ()
+    "Start `robe-mode' if `lsp-mode' isn't active."
+    (unless (bound-and-true-p lsp-mode)
+      (robe-mode +1)))
+  (add-hook 'enh-ruby-mode-hook #'+ruby|init-robe-mode-maybe)
   :config
   (set-repl-handler! 'enh-ruby-mode #'robe-start)
   (set-company-backend! 'enh-ruby-mode 'company-robe)
@@ -99,10 +105,8 @@
         "e" #'bundle-exec
         "o" #'bundle-open))
 
-;; `rvm'
-(setq rspec-use-rvm t)
-
 (after! rbenv
+  (setq rspec-use-rvm nil)
   (add-to-list 'exec-path (expand-file-name "shims" rbenv-installation-dir)))
 
 
@@ -120,9 +124,10 @@
       ;; Rake
       (("task" "namespace") () "end")))
 
-  (when (featurep! :feature evil)
+  (when (featurep! :editor evil)
     (add-hook 'rspec-mode-hook #'evil-normalize-keymaps))
   :config
+  (setq rspec-use-rvm (executable-find "rvm"))
   (map! :localleader
         :prefix "t"
         :map (rspec-verifiable-mode-map rspec-dired-mode-map rspec-mode-map)
@@ -148,7 +153,7 @@
 (def-package! minitest
   :defer t
   :config
-  (when (featurep! :feature evil)
+  (when (featurep! :editor evil)
     (add-hook 'minitest-mode-hook #'evil-normalize-keymaps))
   (map! :localleader
         :map minitest-mode-map

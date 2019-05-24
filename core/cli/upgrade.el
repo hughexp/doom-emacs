@@ -40,7 +40,8 @@ Doing so is equivalent to:
     (unless branch
       (error "Couldn't detect what branch you're using. Is Doom detached?"))
     (when (doom--working-tree-dirty-p doom-emacs-dir)
-      (user-error "Refusing to upgrade because Doom has been modified. Stash or undo your changes"))
+      (user-error "Refusing to upgrade because %S has been modified. Stash or undo your changes"
+                  (abbreviate-file-name doom-emacs-dir)))
     (with-temp-buffer
       (let ((buf (current-buffer)))
         (condition-case-unless-debug e
@@ -57,29 +58,28 @@ Doing so is equivalent to:
                 (unless rev
                   (error "Couldn't detect Doom's version. Is %s a repo?"
                          (abbreviate-file-name doom-emacs-dir)))
-                (when (equal current-rev rev)
-                  (user-error "Doom is up to date!"))
-                (message "Updates for Doom are available!\n\n  Old revision: %s\n  New revision: %s\n"
-                         current-rev rev)
-                (message "Comparision diff: https://github.com/hlissner/doom-emacs/compare/%s...%s\n"
-                         (substring current-rev 0 10) (substring rev 0 10))
-                ;; TODO Display newsletter diff
-                (unless (or doom-auto-accept (y-or-n-p "Proceed?"))
-                  (user-error "Aborted"))
-                (message "Removing byte-compiled files from your config (if any)")
-                (doom-clean-byte-compiled-files)
-                (unless (zerop (process-file "git" nil buf nil "reset" "--hard"
-                                             (format "%s/%s" doom-repo-remote branch)))
-                  (error "An error occurred while checking out the latest commit\n\n%s"
-                         (buffer-string)))
-                (unless (equal (vc-git-working-revision doom-emacs-dir) rev)
-                  (error "Failed to checkout latest commit.\n\n%s" (buffer-string)))
-                (doom-refresh 'force)
+                (if (equal current-rev rev)
+                    (message "Doom is up to date!")
+                  (message "Updates for Doom are available!\n\n  Old revision: %s\n  New revision: %s\n"
+                           current-rev rev)
+                  (message "Comparision diff: https://github.com/hlissner/doom-emacs/compare/%s...%s\n"
+                           (substring current-rev 0 10) (substring rev 0 10))
+                  ;; TODO Display newsletter diff
+                  (unless (or doom-auto-accept (y-or-n-p "Proceed?"))
+                    (user-error "Aborted"))
+                  (message "Removing byte-compiled files from your config (if any)")
+                  (doom-clean-byte-compiled-files)
+                  (unless (zerop (process-file "git" nil buf nil "reset" "--hard"
+                                               (format "%s/%s" doom-repo-remote branch)))
+                    (error "An error occurred while checking out the latest commit\n\n%s"
+                           (buffer-string)))
+                  (unless (equal (vc-git-working-revision doom-emacs-dir) rev)
+                    (error "Failed to checkout latest commit.\n\n%s" (buffer-string))))
+                (doom-refresh)
                 (doom-packages-update doom-auto-accept)
                 (message "Done! Please restart Emacs for changes to take effect")))
           (user-error
            (message "%s Aborting." (error-message-string e)))
           (error
            (message "There was an unexpected error.\n\n%s\n\nOutput:\n%s"
-                    (car e)
-                    (buffer-string))))))))
+                    e (buffer-string))))))))

@@ -17,18 +17,63 @@
 (defun +ivy-rich-buffer-name (candidate)
   "Display the buffer name.
 
-Displays buffers in other projects in `font-lock-doc-face', and
-temporary/special buffers in `font-lock-comment-face'."
-  (with-current-buffer (get-buffer candidate)
-    (propertize candidate
-     'face (cond ((string-match-p "^ *\\*" candidate)
-                  'font-lock-comment-face)
-                 ((not buffer-file-name) nil)
-                 ((not (file-in-directory-p
-                        buffer-file-name
-                        (or (doom-project-root)
-                            default-directory)))
-                  'font-lock-doc-face)))))
+Buffers that are considered unreal (see `doom-real-buffer-p') are dimmed with
+`+ivy-buffer-unreal-face'."
+  (let ((b (get-buffer candidate)))
+    (cond ((ignore-errors
+             (file-remote-p
+              (buffer-local-value 'default-directory b)))
+           (ivy-append-face candidate 'ivy-remote))
+          ((doom-unreal-buffer-p b)
+           (ivy-append-face candidate +ivy-buffer-unreal-face))
+          ((not (buffer-file-name b))
+           (ivy-append-face candidate 'ivy-subdir))
+          ((buffer-modified-p b)
+           (ivy-append-face candidate 'ivy-modified-buffer))
+          (candidate))))
+
+;;;###autoload
+(defun +ivy-rich-buffer-icon (candidate)
+  "Display the icon for CANDIDATE buffer."
+  ;; NOTE This is inspired by `all-the-icons-ivy-buffer-transformer', minus the
+  ;; buffer name and extra padding as those are handled by `ivy-rich'.
+  (propertize "\t" 'display
+              (if-let* ((buffer (get-buffer candidate))
+                        (mode (buffer-local-value 'major-mode buffer)))
+                  (or
+                   (all-the-icons-ivy--icon-for-mode mode)
+                   (all-the-icons-ivy--icon-for-mode (get mode 'derived-mode-parent))
+                   (funcall
+                    all-the-icons-ivy-family-fallback-for-buffer
+                    all-the-icons-ivy-name-fallback-for-buffer))
+                (all-the-icons-icon-for-file candidate))))
+
+;;;###autoload
+(defun +ivy-rich-describe-variable-transformer (cand)
+  "Previews the value of the variable in the minibuffer"
+  (let* ((sym (intern cand))
+         (val (and (boundp sym) (symbol-value sym)))
+         (print-level 3))
+    (replace-regexp-in-string
+     "[\n\t\^[\^M\^@\^G]" " "
+     (cond ((booleanp val)
+            (propertize (format "%s" val) 'face
+                        (if (null val)
+                            'font-lock-comment-face
+                          'success)))
+           ((symbolp val)
+            (propertize (format "'%s" val)
+                        'face 'highlight-quoted-symbol))
+           ((keymapp val)
+            (propertize "<keymap>" 'face 'font-lock-constant-face))
+           ((listp val)
+            (prin1-to-string val))
+           ((stringp val)
+            (propertize (format "%S" val) 'face 'font-lock-string-face))
+           ((numberp val)
+            (propertize (format "%s" val) 'face 'highlight-numbers-number))
+           ((format "%s" val)))
+     t)))
 
 
 ;;
@@ -55,16 +100,14 @@ temporary/special buffers in `font-lock-comment-face'."
           (current
            (setq prompt "Switch to buffer: "
                  action #'ivy--switch-buffer-action))
-          (t
-           (setq prompt "Switch to buffer in other window: "
+          ((setq prompt "Switch to buffer in other window: "
                  action #'ivy--switch-buffer-other-window-action)))
     (when +ivy-buffer-preview
       (cond ((not (and ivy-use-virtual-buffers
                        (eq +ivy-buffer-preview 'everything)))
              (setq update #'+ivy--switch-buffer-preview
                    unwind #'+ivy--switch-buffer-unwind))
-            (t
-             (setq update #'+ivy--switch-buffer-preview-all
+            ((setq update #'+ivy--switch-buffer-preview-all
                    unwind #'+ivy--switch-buffer-unwind))))
     (ivy-read prompt 'internal-complete-buffer
               :action action
@@ -74,7 +117,8 @@ temporary/special buffers in `font-lock-comment-face'."
               :preselect (buffer-name (other-buffer (current-buffer)))
               :matcher #'ivy--switch-buffer-matcher
               :keymap ivy-switch-buffer-map
-              :caller #'+ivy--switch-buffer)))
+              ;; NOTE A clever disguise, needed for virtual buffers.
+              :caller #'ivy-switch-buffer)))
 
 ;;;###autoload
 (defun +ivy/switch-workspace-buffer (&optional arg)
@@ -109,19 +153,19 @@ If ARG (universal argument), open selection in other-window."
           (cl-loop for task in +ivy-task-tags maximize (length (car task))))
          (max-desc-width
           (cl-loop for task in tasks maximize (length (cl-cdadr task))))
-         (max-width (max (- (frame-width) (1+ max-type-width) max-desc-width)
+         (max-width (max (+ max-desc-width 3)
                          25)))
     (cl-loop
-     with fmt = (format "%%-%ds %%-%ds%%s%%s:%%s" max-type-width max-width)
+     with fmt = (format "%%-%ds %%-%ds%%s:%%s" max-type-width max-width)
      for alist in tasks
      collect
      (let-alist alist
-       (format fmt
-               (propertize .type 'face (cdr (assoc .type +ivy-task-tags)))
-               (substring .desc 0 (min max-desc-width (length .desc)))
-               (propertize " | " 'face 'font-lock-comment-face)
-               (propertize (abbreviate-file-name .file) 'face 'font-lock-keyword-face)
-               (propertize .line 'face 'font-lock-constant-face))))))
+       (list (format fmt
+                     (propertize .type 'face (cdr (assoc .type +ivy-task-tags)))
+                     (substring .desc 0 (min max-desc-width (length .desc)))
+                     (propertize (abbreviate-file-name .file) 'face 'font-lock-keyword-face)
+                     (propertize .line 'face 'font-lock-constant-face))
+             .type .file .line)))))
 
 (defun +ivy--tasks (target)
   (let* (case-fold-search
@@ -159,16 +203,14 @@ If ARG (universal argument), open selection in other-window."
 
 (defun +ivy--tasks-open-action (x)
   "Jump to the file and line of the current task."
-  (let ((location (cadr (split-string x " | ")))
-        (type (car (split-string x " "))))
-    (cl-destructuring-bind (file line) (split-string location ":")
-      (with-ivy-window
-        (find-file (expand-file-name file (doom-project-root)))
-        (goto-char (point-min))
-        (forward-line (1- (string-to-number line)))
-        (search-forward type (line-end-position) t)
-        (backward-char (length type))
-        (recenter)))))
+  (cl-destructuring-bind (label type file line) x
+    (with-ivy-window
+      (find-file (expand-file-name file (doom-project-root)))
+      (goto-char (point-min))
+      (forward-line (1- (string-to-number line)))
+      (when (search-forward type (line-end-position) t)
+        (backward-char (length type)))
+      (recenter))))
 
 ;;;###autoload
 (defun +ivy/tasks (&optional arg)
@@ -187,30 +229,33 @@ search current file. See `+ivy-task-tags' to customize what this searches for."
             :caller '+ivy/tasks))
 
 ;;;###autoload
-(defun +ivy/wgrep-occur ()
-  "Invoke the search+replace wgrep buffer on the current ag/rg search results."
+(defun +ivy/woccur ()
+  "Invoke a wgrep buffer on the current ivy results, if supported."
   (interactive)
   (unless (window-minibuffer-p)
     (user-error "No completion session is active"))
   (require 'wgrep)
-  (let* ((caller (ivy-state-caller ivy-last))
-         (occur-fn (plist-get ivy--occurs-list caller))
-         (buffer
-          (generate-new-buffer
-           (format "*ivy-occur%s \"%s\"*"
-                   (if caller (concat " " (prin1-to-string caller)) "")
-                   ivy-text))))
-    (with-current-buffer buffer
-      (let ((inhibit-read-only t))
-        (erase-buffer)
-        (funcall occur-fn))
-      (setf (ivy-state-text ivy-last) ivy-text)
-      (setq ivy-occur-last ivy-last)
-      (setq-local ivy--directory ivy--directory))
-    (ivy-exit-with-action
-     `(lambda (_)
-        (pop-to-buffer ,buffer)
-        (ivy-wgrep-change-to-wgrep-mode)))))
+  (let ((caller (ivy-state-caller ivy-last)))
+    (if-let* ((occur-fn (plist-get +ivy-edit-functions caller)))
+        (ivy-exit-with-action
+         (lambda (_) (funcall occur-fn)))
+      (if-let* ((occur-fn (plist-get ivy--occurs-list caller)))
+          (let ((buffer (generate-new-buffer
+                         (format "*ivy-occur%s \"%s\"*"
+                                 (if caller (concat " " (prin1-to-string caller)) "")
+                                 ivy-text))))
+            (with-current-buffer buffer
+              (let ((inhibit-read-only t))
+                (erase-buffer)
+                (funcall occur-fn))
+              (setf (ivy-state-text ivy-last) ivy-text)
+              (setq ivy-occur-last ivy-last)
+              (setq-local ivy--directory ivy--directory))
+            (ivy-exit-with-action
+             `(lambda (_)
+                (pop-to-buffer ,buffer)
+                (ivy-wgrep-change-to-wgrep-mode))))
+        (user-error "%S doesn't support wgrep" caller)))))
 
 ;;;###autoload
 (defun +ivy-yas-prompt (prompt choices &optional display-fn)
@@ -303,8 +348,8 @@ order.
                          (projectile-project-name))
                         ((file-relative-name directory project-root))))))
     (require 'counsel)
-    (let ((counsel-more-chars-alist
-           (if query '((t . 1)) counsel-more-chars-alist)))
+    (let ((ivy-more-chars-alist
+           (if query '((t . 1)) ivy-more-chars-alist)))
       (pcase engine
         ('grep
          (let ((args (if recursive " -R"))
@@ -339,31 +384,32 @@ order.
            return (intern (format format tool))))
 
 ;;;###autoload
-(defun +ivy/project-search (&optional all-files-p)
+(defun +ivy/project-search (&optional arg initial-query directory)
   "Performs a project search from the project root.
 
 Uses the first available search backend from `+ivy-project-search-engines'. If
-ALL-FILES-P (universal argument), include all files, even hidden or compressed
-ones, in the search."
+ARG (universal argument), include all files, even hidden or compressed ones, in
+the search."
   (interactive "P")
   (funcall (or (+ivy--get-command "+ivy/%s")
                #'+ivy/grep)
-           (or all-files-p current-prefix-arg)))
+           arg
+           initial-query
+           directory))
 
 ;;;###autoload
-(defun +ivy/project-search-from-cwd (&optional all-files-p)
+(defun +ivy/project-search-from-cwd (&optional arg initial-query)
   "Performs a project search recursively from the current directory.
 
 Uses the first available search backend from `+ivy-project-search-engines'. If
-ALL-FILES-P (universal argument), include all files, even hidden or compressed
-ones."
+ARG (universal argument), include all files, even hidden or compressed ones."
   (interactive "P")
   (funcall (or (+ivy--get-command "+ivy/%s-from-cwd")
                #'+ivy/grep-from-cwd)
-           (or all-files-p current-prefix-arg)))
+           arg
+           initial-query))
 
 
-;; Relative to project root
 ;;;###autoload (autoload '+ivy/rg "completion/ivy/autoload/ivy")
 ;;;###autoload (autoload '+ivy/rg-from-cwd "completion/ivy/autoload/ivy")
 ;;;###autoload (autoload '+ivy/ag "completion/ivy/autoload/ivy")
