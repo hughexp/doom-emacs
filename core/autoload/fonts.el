@@ -27,24 +27,30 @@ acceptable values for this variable.")
 
 (defun doom--font-name (fontname frame)
   (when (query-fontset fontname)
-    (when-let* ((ascii (assq 'ascii (aref (fontset-info fontname frame) 2))))
+    (when-let (ascii (assq 'ascii (aref (fontset-info fontname frame) 2)))
       (setq fontname (nth 2 ascii))))
   (or (x-decompose-font-name fontname)
       (error "Cannot decompose font name")))
 
+(defun doom--frame-list (&optional frame)
+  "Return a list consisting of FRAME and all of FRAME's child frames."
+  (let ((frame (or frame (selected-frame))))
+    (cons (selected-frame)
+          (cl-loop for fr in (frame-list)
+                   if (eq (frame-parameter fr 'parent-frame) frame)
+                   collect fr))))
+
 ;;;###autoload
 (defun doom-adjust-font-size (increment &optional frame)
   "Increase size of font in FRAME by INCREMENT.
-Interactively, INCREMENT is given by the prefix argument.
-Optional FRAME parameter defaults to current frame."
-  (interactive "p")
+FRAME parameter defaults to current frame."
   (let* ((frame (or frame (selected-frame)))
          (font (frame-parameter frame 'font))
          (font (doom--font-name font frame)))
     (let ((new-size (+ (string-to-number (aref font xlfd-regexp-pixelsize-subnum))
                        increment)))
       (unless (> new-size 0)
-        (error "Font is to small at %d" new-size))
+        (error "Font is too small at %d" new-size))
       (aset font xlfd-regexp-pixelsize-subnum (number-to-string new-size)))
     ;; Set point size & width to "*", so frame width will adjust to new font size
     (aset font xlfd-regexp-pointsize-subnum "*")
@@ -52,11 +58,21 @@ Optional FRAME parameter defaults to current frame."
     (setq font (x-compose-font-name font))
     (unless (x-list-fonts font)
       (error "Cannot change font size"))
-    (modify-frame-parameters frame `((font . ,font)))))
+    (dolist (fr (doom--frame-list frame))
+      (modify-frame-parameters fr `((font . ,font))))))
 
 
 ;;
 ;;; Commands
+
+;;;###autoload
+(defun doom/reload-font ()
+  "Reload your fonts, if they're set.
+See `doom-init-fonts-h'."
+  (interactive)
+  (when doom-font
+    (set-frame-font doom-font t))
+  (mapc #'doom-init-fonts-h (frame-list)))
 
 ;;;###autoload
 (defun doom/increase-font-size (count)
@@ -87,7 +103,7 @@ Assuming it has been adjusted via `doom/increase-font-size' and
   (let ((zoom-factor (frame-parameter nil 'font-scale)))
     (if (not zoom-factor)
         (user-error "Font size hasn't been changed")
-      (set-frame-font doom-font t)
+      (set-frame-font doom-font t (doom--frame-list))
       (modify-frame-parameters nil '((font-scale)))
       (run-hooks 'doom-change-font-size-hook))))
 
@@ -109,6 +125,6 @@ This uses `doom/increase-font-size' under the hood, and enlargens the font by
           (set-frame-font (if doom-big-font-mode doom-big-font doom-font)
                           t (list frame))
           (run-hooks 'doom-change-font-size-hook))
-      (set-frame-font doom-font t (list frame))
+      (set-frame-font doom-font t (doom--frame-list frame))
       (when doom-big-font-mode
         (doom-adjust-font-size doom-big-font-increment frame)))))
