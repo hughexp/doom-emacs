@@ -1,166 +1,330 @@
 ;;; -*- lexical-binding: t; no-byte-compile: t; -*-
 
-(require 'seq)
-
+;;
+;;; Variables
 
 (defvar doom-auto-accept (getenv "YES")
   "If non-nil, Doom will auto-accept any confirmation prompts during batch
-commands like `doom-packages-install', `doom-packages-update' and
+commands like `doom-cli-packages-install', `doom-cli-packages-update' and
 `doom-packages-autoremove'.")
 
-(defvar doom-cli-pre-execute-hook nil
-  "TODO")
-(defvar doom-cli-post-success-execute-hook nil
-  "TODO")
+(defvar doom-auto-discard (getenv "FORCE")
+  "If non-nil, discard all local changes while updating.")
 
+(defvar doom--cli-p nil)
 (defvar doom--cli-commands (make-hash-table :test 'equal))
 (defvar doom--cli-groups (make-hash-table :test 'equal))
 (defvar doom--cli-group nil)
 
+(cl-defstruct
+    (doom-cli
+     (:constructor nil)
+     (:constructor
+      make-doom-cli
+      (name &key desc aliases optlist arglist plist fn
+            &aux
+            (optlist
+             (cl-loop for (symbol options desc) in optlist
+                      for ((_ . options) (_ . params))
+                      = (seq-group-by #'stringp options)
+                      collect
+                      (make-doom-cli-option :symbol symbol
+                                            :flags options
+                                            :args params
+                                            :desc desc))))))
+  (name nil :read-only t)
+  (desc "TODO")
+  aliases
+  optlist
+  arglist
+  plist
+  (fn (lambda (_) (print! "But nobody came!"))))
 
-;;
-;;; Dispatcher API
+(cl-defstruct doom-cli-option
+  (symbol)
+  (flags ())
+  (args ())
+  (desc "TODO"))
 
-(defun doom-file-cookie-p (file)
-  (with-temp-buffer
-    (insert-file-contents-literally file nil 0 256)
-    (if (and (re-search-forward "^;;;###if " nil t)
-             (<= (line-number-at-pos) 3))
-        (let ((load-file-name file))
-          (eval (sexp-at-point) t))
-      t)))
+(defun doom--cli-get-option (cli flag)
+  (cl-find-if (doom-partial #'member flag)
+              (doom-cli-optlist cli)
+              :key #'doom-cli-option-flags))
 
-(defun doom-sh (command &rest args)
-  "Execute COMMAND with ARGS in the shell and return (STATUS . OUTPUT).
+(defun doom--cli-process (cli args)
+  (let* ((args (copy-sequence args))
+         (arglist (copy-sequence (doom-cli-arglist cli)))
+         (expected (or (cl-position-if (doom-rpartial #'memq cl--lambda-list-keywords)
+                                       arglist)
+                       (length arglist)))
+         (got 0)
+         restvar
+         rest
+         alist)
+    (catch 'done
+      (while args
+        (let ((arg (pop args)))
+          (cond ((eq (car arglist) '&rest)
+                 (setq restvar (cadr arglist)
+                       rest (cons arg args))
+                 (throw 'done t))
 
-STATUS is a boolean"
-  (let ((output (get-buffer-create "*doom-sh-output*")))
-    (unwind-protect
-        (cons (or (apply #'call-process command nil output nil args)
-                  -1)
-              (with-current-buffer output
-                (string-trim (buffer-string))))
-      (kill-buffer output))))
+                ((string-match "^\\(--\\([a-zA-Z0-9][a-zA-Z0-9-_]*\\)\\)\\(?:=\\(.+\\)\\)?$" arg)
+                 (let* ((fullflag (match-string 1 arg))
+                        (opt (doom--cli-get-option cli fullflag)))
+                   (unless opt
+                     (user-error "Unrecognized switch %S" (concat "--" (match-string 2 arg))))
+                   (setf (alist-get (doom-cli-option-symbol opt) alist)
+                         (or (if (doom-cli-option-args opt)
+                                 (or (match-string 3 arg)
+                                     (pop args)
+                                     (user-error "%S expected an argument, but got none"
+                                                 fullflag))
+                               (if (match-string 3 arg)
+                                   (user-error "%S was not expecting an argument, but got %S"
+                                               fullflag (match-string 3 arg))
+                                 fullflag))))))
 
-(defun doom--dispatch-command (command)
-  (when (symbolp command)
-    (setq command (symbol-name command)))
-  (cl-check-type command string)
-  (intern-soft
-   (format "doom-cli-%s"
-           (if (gethash command doom--cli-commands)
-               command
-             (cl-loop for key
-                      being the hash-keys in doom--cli-commands
-                      for aliases = (plist-get (gethash key doom--cli-commands) :aliases)
-                      if (member command aliases)
-                      return key)))))
+                ((string-match "^\\(-\\([a-zA-Z0-9]+\\)\\)$" arg)
+                 (let ((fullflag (match-string 1 arg))
+                       (flag     (match-string 2 arg)))
+                   (dolist (switch (split-string flag "" t))
+                     (if-let (opt (doom--cli-get-option cli (concat "-" switch)))
+                         (setf (alist-get (doom-cli-option-symbol opt) alist)
+                               (if (doom-cli-option-args opt)
+                                   (or (pop args)
+                                       (user-error "%S expected an argument, but got none"
+                                                   fullflag))
+                                 fullflag))
+                       (user-error "Unrecognized switch %S" (concat "-" switch))))))
 
-(defun doom--dispatch-format (desc &optional short)
-  (with-temp-buffer
-    (let ((fill-column 72))
-      (save-excursion
-        (insert desc)
-        (while (re-search-backward "\n\n[^ \n]" nil t)
-          (fill-paragraph))))
-    (if (not short)
-        (buffer-string)
-      (buffer-substring (line-beginning-position)
-                        (line-end-position)))))
+                (arglist
+                 (cl-incf got)
+                 (let ((spec (pop arglist)))
+                   (when (eq spec '&optional)
+                     (setq spec (pop arglist)))
+                   (setf (alist-get spec alist) arg))
+                 (when (null arglist)
+                   (throw 'done t)))
 
-(defun doom--dispatch-help-1 (command)
-  (cl-destructuring-bind (&key aliases hidden _group)
-      (gethash command doom--cli-commands)
-    (unless hidden
-      (print! "%-11s\t%s\t%s"
-              command (if aliases (string-join aliases ",") "")
-              (doom--dispatch-format
-               (documentation (doom--dispatch-command command))
-               t)))))
+                (t
+                 (push arg args)
+                 (throw 'done t))))))
+    (when (< got expected)
+      (error "Expected %d arguments, got %d" expected got))
+    (when rest
+      (setf (alist-get restvar alist) rest))
+    alist))
 
-(defun doom--dispatch-help (&optional fn &rest args)
-  "Display help documentation for a dispatcher command. If fn and DESC are
-omitted, show all available commands, their aliases and brief descriptions."
-  (if fn
-      (princ (documentation fn))
-    (print! (bold "%-11s\t%s\t%s" "Command:" "Alias" "Description"))
-    (print-group!
-     (dolist (group (seq-group-by (lambda (key) (plist-get (gethash key doom--cli-commands) :group))
-                                  (hash-table-keys doom--cli-commands)))
-       (if (null (car group))
-           (mapc #'doom--dispatch-help-1 (cdr group))
-         (print! "%-30s\t%s" (bold (car group)) (gethash (car group) doom--cli-groups))
-         (print-group!
-          (mapc #'doom--dispatch-help-1 (cdr group))))
-       (terpri)))))
+(defun doom-cli-get (command)
+  "Return a CLI object associated by COMMAND name (string)."
+  (cond ((null command) nil)
+        ((doom-cli-p command) command)
+        ((doom-cli-get
+          (gethash (cond ((symbolp command) command)
+                         ((stringp command) (intern command))
+                         (command))
+                   doom--cli-commands)))))
 
-(defun doom-dispatch (cmd args &optional show-help)
-  "Parses ARGS and invokes a dispatcher.
+(defun doom-cli-internal-p (cli)
+  "Return non-nil if CLI is an internal (non-public) command."
+  (string-prefix-p ":" (doom-cli-name cli)))
 
-If SHOW-HELP is non-nil, show the documentation for said dispatcher."
-  (when (equal cmd "help")
-    (setq show-help t)
-    (when args
-      (setq cmd  (car args)
-            args (cdr args))))
-  (let ((fn (doom--dispatch-command cmd)))
-    (unless (fboundp fn)
-      (user-error "%S is not any command *I* know!" cmd))
-    (if show-help
-        (doom--dispatch-help fn args)
-      (let ((start-time (current-time)))
-        (run-hooks 'doom-cli-pre-execute-hook)
-        (unwind-protect
-            (when-let (ret (apply fn args))
-              (print!
-               "\n%s"
-               (success "Finished! (%.4fs)"
-                        (float-time
-                         (time-subtract (current-time)
-                                        start-time))))
-              (run-hooks 'doom-cli-post-execute-hook)
-              ret)
-          (run-hooks 'doom-cli-post-error-execute-hook))))))
+(defun doom-cli-execute (command &optional args)
+  "Execute COMMAND (string) with ARGS (list of strings).
+
+Executes a cli defined with `defcli!' with the name or alias specified by
+COMMAND, and passes ARGS to it."
+  (if-let (cli (doom-cli-get command))
+      (funcall (doom-cli-fn cli)
+               (doom--cli-process cli args))
+    (user-error "Couldn't find any %S command" command)))
+
+(defmacro defcli! (name speclist &optional docstring &rest body)
+  "Defines a CLI command.
+
+COMMAND is a symbol or a list of symbols representing the aliases for this
+command. DOCSTRING is a string description; its first line should be short
+(under 60 characters), as it will be used as a summary for 'doom help'.
+
+SPECLIST is a specification for options and arguments, which can be a list
+specification for an option/switch in the following format:
+
+  (VAR [FLAGS... ARGS...] DESCRIPTION)
+
+Otherwise, SPECLIST accepts the same argument specifiers as `defun'.
+
+BODY will be run when this dispatcher is called."
+  (declare (indent 2) (doc-string 3))
+  (unless (stringp docstring)
+    (push docstring body)
+    (setq docstring "TODO"))
+  (let ((names (doom-enlist name))
+        (optlist (cl-remove-if-not #'listp speclist))
+        (arglist (cl-remove-if #'listp speclist))
+        (plist (cl-loop for (key val) on body by #'cddr
+                        if (keywordp key)
+                        nconc (list key val) into plist
+                        else return plist)))
+    `(let ((name ',(car names))
+           (aliases ',(cdr names))
+           (plist ',plist))
+       (when doom--cli-group
+         (setq plist (plist-put plist :group doom--cli-group)))
+       (puthash
+        name
+        (make-doom-cli (symbol-name name)
+                       :desc ,docstring
+                       :aliases (mapcar #'symbol-name aliases)
+                       :arglist ',arglist
+                       :optlist ',optlist
+                       :plist plist
+                       :fn
+                       (lambda (--alist--)
+                         (ignore --alist--)
+                         (let ,(cl-loop for opt in speclist
+                                        for optsym = (if (listp opt) (car opt) opt)
+                                        unless (memq optsym cl--lambda-list-keywords)
+                                        collect (list optsym `(cdr (assq ',optsym --alist--))))
+                           ,@(unless (plist-get plist :bare)
+                               '((unless doom-init-p
+                                   (doom-initialize 'force 'noerror)
+                                   (doom-initialize-modules))))
+                           ,@body)))
+        doom--cli-commands)
+       (when aliases
+         (mapc (doom-rpartial #'puthash name doom--cli-commands)
+               aliases)))))
 
 (defmacro defcligroup! (name docstring &rest body)
-  "TODO"
+  "Declare all enclosed cli commands are part of the NAME group."
   (declare (indent defun) (doc-string 2))
   `(let ((doom--cli-group ,name))
      (puthash doom--cli-group ,docstring doom--cli-groups)
      ,@body))
 
-(defmacro defcli! (names arglist docstring &rest body)
-  "Define a dispatcher command. COMMAND is a symbol or a list of symbols
-representing the aliases for this command. DESC is a string description. The
-first line should be short (under 60 letters), as it will be displayed for
-bin/doom help.
 
-BODY will be run when this dispatcher is called."
-  (declare (indent defun) (doc-string 3))
-  (let* ((names (mapcar #'symbol-name (doom-enlist names)))
-         (fn (intern (format "doom-cli-%s" (car names))))
-         (plist (cl-loop while (keywordp (car body))
-                         collect (pop body)
-                         collect (pop body))))
-    (macroexp-progn
-     (reverse
-      `((let ((plist ',plist))
-          (setq plist (plist-put plist :aliases ',(cdr names)))
-          (unless (or (plist-member plist :group)
-                      (null doom--cli-group))
-            (plist-put plist :group doom--cli-group))
-          (puthash ,(car names) plist doom--cli-commands))
-        (defun ,fn ,arglist
-          ,docstring
-          ,@body))))))
+;;
+;;; Straight hacks
+
+(defvar doom--cli-straight-discard-options
+  '("^Delete remote \"[^\"]+\", re-create it with correct "
+    "^Reset branch "
+    "^Abort merge$"
+    "^Discard changes$"))
+
+;; HACK Remove dired & magit options from prompt, since they're inaccessible in
+;;      noninteractive sessions.
+(advice-add #'straight-vc-git--popup-raw :override #'straight--popup-raw)
+
+;; HACK Replace GUI popup prompts (which hang indefinitely in tty Emacs) with
+;;      simple prompts.
+(defadvice! doom--straight-fallback-to-y-or-n-prompt-a (orig-fn &optional prompt)
+  :around #'straight-are-you-sure
+  (or doom-auto-accept
+      (if noninteractive
+          (y-or-n-p (format! "%s" (or prompt "")))
+        (funcall orig-fn prompt))))
+
+(defadvice! doom--straight-fallback-to-tty-prompt-a (orig-fn prompt actions)
+  "Modifies straight to prompt on the terminal when in noninteractive sessions."
+  :around #'straight--popup-raw
+  (if (not noninteractive)
+      (funcall orig-fn prompt actions)
+    ;; We can't intercept C-g, so no point displaying any options for this key
+    ;; when C-c is the proper way to abort batch Emacs.
+    (delq! "C-g" actions 'assoc)
+    ;; HACK These are associated with opening dired or magit, which isn't
+    ;;      possible in tty Emacs, so...
+    (delq! "e" actions 'assoc)
+    (delq! "g" actions 'assoc)
+    (if doom-auto-discard
+        (cl-loop with doom-auto-accept = t
+                 for (_key desc func) in actions
+                 when desc
+                 when (cl-find-if (doom-rpartial #'string-match-p desc)
+                                  doom--cli-straight-discard-options)
+                 return (funcall func))
+      (print! (start "%s") (red prompt))
+      (print-group!
+       (terpri)
+       (let (options)
+         (print-group!
+          (print! " 1) Abort")
+          (cl-loop for (_key desc func) in actions
+                   when desc
+                   do (push func options)
+                   and do
+                   (print! "%2s) %s" (1+ (length options))
+                           (if (cl-find-if (doom-rpartial #'string-match-p desc)
+                                           doom--cli-straight-discard-options)
+                               (concat desc " (Recommended)")
+                             desc))))
+         (terpri)
+         (let* ((options
+                 (cons (lambda ()
+                         (let ((doom-format-indent 0))
+                           (terpri)
+                           (print! (warn "Aborted")))
+                         (kill-emacs 1))
+                       (nreverse options)))
+                (prompt
+                 (format! "How to proceed? (%s) "
+                          (mapconcat #'number-to-string
+                                     (number-sequence 1 (length options))
+                                     ", ")))
+                answer fn)
+           (while (null (nth (setq answer (1- (read-number prompt)))
+                             options))
+             (print! (warn "%s is not a valid answer, try again.")
+                     answer))
+           (funcall (nth answer options))))))))
+
+(defadvice! doom--straight-respect-print-indent-a (args)
+  "Indent straight progress messages to respect `doom-format-indent', so we
+don't have to pass whitespace to `straight-use-package's fourth argument
+everywhere we use it (and internally)."
+  :filter-args #'straight-use-package
+  (cl-destructuring-bind
+      (melpa-style-recipe &optional no-clone no-build cause interactive)
+      args
+    (list melpa-style-recipe no-clone no-build
+          (if (and (not cause)
+                   (boundp 'doom-format-indent)
+                   (> doom-format-indent 0))
+              (make-string (1- (or doom-format-indent 1)) 32)
+            cause)
+          interactive)))
 
 
 ;;
-;;; Dispatch commands
+;;; Dependencies
 
-;; Load all of our subcommands
-(defcli! (refresh re) (&rest args)
-  "Ensure Doom is properly set up.
+(require 'seq)
+
+;; Eagerly load these libraries because we may be in a session that hasn't been
+;; fully initialized (e.g. where autoloads files haven't been generated or
+;; `load-path' populated).
+(load! "autoload/cli")
+(load! "autoload/debug")
+(load! "autoload/files")
+(load! "autoload/format")
+(load! "autoload/plist")
+
+
+;;
+;;; CLI Commands
+
+(load! "cli/help")
+(load! "cli/install")
+
+(defcligroup! "Maintenance"
+  "For managing your config and packages"
+  (defcli! (sync s refresh re)
+    ((if-necessary-p   ["-n" "--if-necessary"] "Only regenerate autoloads files if necessary")
+     (inhibit-envvar-p ["-e"] "Don't regenerate the envvar file")
+     (prune-p          ["-p" "--prune"] "Purge orphaned packages & regraft repos"))
+    "Synchronize your config with Doom Emacs.
 
 This is the equivalent of running autoremove, install, autoloads, then
 recompile. Run this whenever you:
@@ -173,50 +337,43 @@ recompile. Run this whenever you:
 It will ensure that unneeded packages are removed, all needed packages are
 installed, autoloads files are up-to-date and no byte-compiled files have gone
 stale."
-  (print! (green "Initiating a refresh of Doom Emacs...\n"))
-  (let ((force-p (or (member "-f" args)
-                     (member "--force" args)))
-        success)
-    (when (file-exists-p doom-env-file)
-      (doom-reload-env-file 'force))
-    (doom-reload-core-autoloads force-p)
-    (unwind-protect
-        (progn
-          (and (doom-packages-install doom-auto-accept)
-               (setq success t))
-          (and (doom-packages-rebuild doom-auto-accept)
-               (setq success t))
-          (and (doom-packages-purge 'elpa-p 'builds-p nil doom-auto-accept)
-               (setq success t)))
-      (doom-reload-package-autoloads (or success force-p))
-      (doom-byte-compile nil 'recompile))
-    t))
+    :bare t
+    (let (success)
+      ;; Ensures that no pre-existing state pollutes the generation of the new
+      ;; autoloads files.
+      (dolist (file (list doom-autoload-file doom-package-autoload-file))
+        (delete-file file)
+        (delete-file (byte-compile-dest-file file)))
 
+      (doom-initialize 'force 'noerror)
+      (doom-initialize-modules)
 
-;; Load all of our subcommands
-(load! "cli/install")
+      (print! (start "Synchronizing your config with Doom Emacs..."))
+      (print-group!
+       (when (and (not inhibit-envvar-p)
+                  (file-exists-p doom-env-file))
+         (doom-cli-reload-env-file 'force))
 
-(defcligroup! "Diagnostics"
-  "For troubleshooting and diagnostics"
-  (defcli! (doctor doc) ()
-    "Checks for issues with your environment & Doom config.
+       (doom-cli-reload-core-autoloads)
+       (doom-cli-packages-install)
+       (doom-cli-packages-build)
+       (doom-cli-packages-purge prune-p 'builds-p prune-p prune-p)
+       (doom-cli-reload-package-autoloads)
+       t)))
 
-Use the doctor to diagnose common problems or list missing dependencies in
-enabled modules.")
-
-  (load! "cli/debug")
-  (load! "cli/test"))
-
-(defcligroup! "Maintenance"
-  "For managing your config and packages"
   (load! "cli/env")
   (load! "cli/upgrade")
   (load! "cli/packages")
-  (load! "cli/autoloads")
-  (load! "cli/patch-macos"))
+  (load! "cli/autoloads"))
 
-(defcligroup! "Byte compilation"
-  "For byte-compiling Doom and your config"
+(defcligroup! "Diagnostics"
+  "For troubleshooting and diagnostics"
+  (load! "cli/doctor")
+  (load! "cli/debug")
+  (load! "cli/test"))
+
+(defcligroup! "Compilation"
+  "For compiling Doom and your config"
   (load! "cli/byte-compile"))
 
 (defcligroup! "Utilities"
@@ -224,7 +381,7 @@ enabled modules.")
   (defcli! run ()
     "Run Doom Emacs from bin/doom's parent directory.
 
-All arguments are passed on to Emacs (except for -p and -e).
+All arguments are passed on to Emacs.
 
   doom run
   doom run -nw init.el

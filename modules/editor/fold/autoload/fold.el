@@ -27,7 +27,10 @@
   (save-excursion
     (ignore-errors
       (or (hs-looking-at-block-start-p)
-          (hs-find-block-beginning)))))
+          (hs-find-block-beginning)
+          (unless (eolp)
+            (end-of-line)
+            (+fold--hideshow-fold-p))))))
 
 (defun +fold--invisible-points (count)
   (let (points)
@@ -132,7 +135,7 @@ Targets `vimmish-fold', `hideshow' and `outline' folds."
   (cl-loop with orig-pt = (point)
            for fn
            in (list (lambda ()
-                      (when hs-block-start-regexp
+                      (when (bound-and-true-p hs-block-start-regexp)
                         (car (+fold--invisible-points count))))
                     (lambda ()
                       (when (featurep 'vimish-fold)

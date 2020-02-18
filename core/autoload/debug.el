@@ -8,10 +8,10 @@
   emacs -Q -l init.el -f doom-run-all-startup-hooks-h"
   (run-hook-wrapped 'after-init-hook #'doom-try-run-hook)
   (setq after-init-time (current-time))
-  (dolist (hook (list 'delayed-warnings-hook
-                      'emacs-startup-hook 'term-setup-hook
-                      'window-setup-hook))
-    (run-hook-wrapped hook #'doom-try-run-hook)))
+  (mapc (doom-rpartial #'run-hook-wrapped #'doom-try-run-hook)
+        (list 'delayed-warnings-hook
+              'emacs-startup-hook 'tty-setup-hook
+              'window-setup-hook)))
 
 
 ;;
@@ -23,33 +23,52 @@
     (when (file-exists-p file)
       (insert-file-contents file))))
 
+(defun doom--collect-forms-in (file form)
+  (when (file-readable-p file)
+    (let (forms)
+      (with-temp-buffer
+        (insert-file-contents file)
+        (delay-mode-hooks (emacs-lisp-mode))
+        (while (re-search-forward (format "(%s " (regexp-quote form)) nil t)
+          (unless (doom-point-in-string-or-comment-p)
+            (save-excursion
+              (goto-char (match-beginning 0))
+              (push (sexp-at-point) forms))))
+        (nreverse forms)))))
+
 ;;;###autoload
 (defun doom-info ()
   "Returns diagnostic information about the current Emacs session in markdown,
 ready to be pasted in a bug report on github."
   (require 'vc-git)
+  (require 'core-packages)
   (let ((default-directory doom-emacs-dir)
         (doom-modules (doom-modules)))
     (cl-letf
         (((symbol-function 'sh)
-          (lambda (format)
-            (string-trim
-             (shell-command-to-string format)))))
+          (lambda (&rest args)
+            (cdr (apply #'doom-call-process args)))))
       `((emacs
          (version . ,emacs-version)
          (features ,@system-configuration-features)
          (build . ,(format-time-string "%b %d, %Y" emacs-build-time))
-         (buildopts ,system-configuration-options))
+         (buildopts ,system-configuration-options)
+         (windowsys . ,(if noninteractive 'batch window-system))
+         (daemonp . ,(cond ((daemonp) 'daemon)
+                           ((and (require 'server)
+                                 (server-running-p))
+                            'server-running))))
         (doom
          (version . ,doom-version)
-         (build . ,(sh "git log -1 --format=\"%D %h %ci\"")))
+         (build . ,(sh "git" "log" "-1" "--format=%D %h %ci"))
+         (dir . ,(abbreviate-file-name (file-truename doom-private-dir))))
         (system
          (type . ,system-type)
          (config . ,system-configuration)
          (shell . ,shell-file-name)
          (uname . ,(if IS-WINDOWS
                        "n/a"
-                     (sh "uname -msrv")))
+                     (sh "uname" "-msrv")))
          (path . ,(mapcar #'abbreviate-file-name exec-path)))
         (config
          (envfile
@@ -63,34 +82,40 @@ ready to be pasted in a bug report on github."
          (modules
           ,@(or (cl-loop with cat = nil
                          for key being the hash-keys of doom-modules
-                         if (or (not cat) (not (eq cat (car key))))
+                         if (or (not cat)
+                                (not (eq cat (car key))))
                          do (setq cat (car key))
                          and collect cat
-                         and collect (cdr key)
-                         else collect
+                         collect
                          (let ((flags (doom-module-get cat (cdr key) :flags)))
                            (if flags
                                `(,(cdr key) ,@flags)
                              (cdr key))))
                 '("n/a")))
          (packages
-          ,@(or (ignore-errors
-                  (require 'core-packages)
-                  (doom-initialize-packages)
-                  (cl-loop for (name . plist) in doom-packages
-                           if (doom-package-private-p name)
-                           collect
-                           (format
-                            "%s" (if-let (splist (doom-plist-delete (copy-sequence plist)
-                                                                    :modules))
-                                     (cons name splist)
-                                   name))))
+          ,@(or (condition-case e
+                    (mapcar
+                     #'cdr (doom--collect-forms-in
+                            (doom-path doom-private-dir "packages.el")
+                            "package!"))
+                  (error (format "<%S>" e)))
                 '("n/a")))
-         (elpa-packages
-          ,@(or (ignore-errors
-                  (cl-loop for (name . _) in package-alist
-                           collect (format "%s" name)))
-                '("n/a"))))))))
+         (elpa
+          ,@(or (condition-case e
+                    (progn
+                      (package-initialize)
+                      (cl-loop for (name . _) in package-alist
+                               collect (format "%s" name)))
+                  (error (format "<%S>" e)))
+                '("n/a")))
+         (unpin ,@(or (condition-case e
+                          (mapcan #'identity
+                                  (mapcar
+                                   #'cdr (doom--collect-forms-in
+                                          (doom-path doom-private-dir "packages.el")
+                                          "unpin!")))
+                        (error (format "<%S>" e)))
+                      '("n/a"))))))))
 
 
 ;;
@@ -110,7 +135,7 @@ branch and commit."
                 "n/a")
             (or (vc-git-working-revision doom-core-dir)
                 "n/a")
-            (or (string-trim (shell-command-to-string "git log -1 --format=%ci"))
+            (or (cdr (doom-call-process "git" "log" "-1" "--format=%ci"))
                 "n/a"))))
 
 ;;;###autoload
@@ -130,7 +155,7 @@ markdown and copies it to your clipboard, ready to be pasted into bug reports!"
           (progn
             (save-excursion
               (pp info (current-buffer)))
-            (when (re-search-forward "(modules " nil t)
+            (when (search-forward "(modules " nil t)
               (goto-char (match-beginning 0))
               (cl-destructuring-bind (beg . end)
                   (bounds-of-thing-at-point 'sexp)
@@ -203,25 +228,27 @@ markdown and copies it to your clipboard, ready to be pasted into bug reports!"
                      (setq-default buffer-undo-tree (make-undo-tree))))
                  (pcase mode
                    (`vanilla-doom+ ; Doom core + modules - private config
-                    `((setq doom-private-dir "/tmp/does/not/exist")
-                      (load-file ,user-init-file)
+                    `((load-file ,(expand-file-name "core.el" doom-core-dir))
+                      (doom-initialize)
+                      (doom-initialize-core)
+                      (add-hook 'window-setup-hook #'doom-display-benchmark-h)
                       (setq doom-modules ',doom-modules)
                       (maphash (lambda (key plist)
                                  (let ((doom--current-module key)
                                        (doom--current-flags (plist-get plist :flags)))
-                                   (load! "init" (plist-get plist :path) t)))
+                                   (load! "init" (doom-module-locate-path (car key) (cdr key)) t)))
                                doom-modules)
                       (maphash (lambda (key plist)
                                  (let ((doom--current-module key)
                                        (doom--current-flags (plist-get plist :flags)))
-                                   (load! "config" (plist-get plist :path) t)))
+                                   (load! "config" (doom-module-locate-path (car key) (cdr key)) t)))
                                doom-modules)
                       (run-hook-wrapped 'doom-init-modules-hook #'doom-try-run-hook)
                       (doom-run-all-startup-hooks-h)))
                    (`vanilla-doom  ; only Doom core
-                    `((setq doom-private-dir "/tmp/does/not/exist"
-                            doom-init-modules-p t)
-                      (load-file ,user-init-file)
+                    `((load-file ,(expand-file-name "core.el" doom-core-dir))
+                      (doom-initialize)
+                      (doom-initialize-core)
                       (doom-run-all-startup-hooks-h)))
                    (`vanilla       ; nothing loaded
                     `((package-initialize)))))))
@@ -296,34 +323,6 @@ to reproduce bugs and determine if Doom is to blame."
 ;;
 ;;; Reporting bugs
 
-(defun doom--report-bug ()
-  "TODO"
-  (interactive)
-  (let ((url "https://github.com/hlissner/doom-emacs/issues/new?body="))
-    ;; TODO Refactor me
-    (save-restriction
-      (widen)
-      (goto-char (point-min))
-      (re-search-forward "^-------------------------------------------------------------------\n" nil t)
-      (skip-chars-forward " \n\t")
-      (condition-case e
-          (progn
-            (save-excursion
-              (when (and (re-search-backward "\\+ [ ] " nil t)
-                         (not (y-or-n-p "You haven't checked all the boxes. Continue anyway?")))
-                (error "Aborted submit")))
-            (narrow-to-region (point) (point-max))
-            (let ((text (buffer-string)))
-              ;; `url-encode-url' doesn't encode ampersands
-              (setq text (replace-regexp-in-string "&" "%26" text))
-              (setq url (url-encode-url (concat url text)))
-              ;; HACK: encode some characters according to HTML URL Encoding Reference
-              ;; http://www.w3schools.com/tags/ref_urlencode.asp
-              (setq url (replace-regexp-in-string "#" "%23" url))
-              (setq url (replace-regexp-in-string ";" "%3B" url))
-              (browse-url url)))
-        (error (signal (car e) (car e)))))))
-
 ;;;###autoload
 (defun doom/report-bug ()
   "Open a markdown buffer destinated to populate the New Issue page on Doom
@@ -332,36 +331,7 @@ Emacs' issue tracker.
 If called when a backtrace buffer is present, it and the output of `doom-info'
 will be automatically appended to the result."
   (interactive)
-  ;; TODO Refactor me
-  (let ((backtrace
-         (when (get-buffer "*Backtrace*")
-           (with-current-buffer "*Backtrace*"
-             (string-trim
-              (buffer-substring-no-properties
-               (point-min)
-               (min (point-max) 1000))))))
-        (buf (get-buffer-create "*doom:sandbox*")))
-    (with-current-buffer buf
-      (erase-buffer)
-      (condition-case _ (gfm-mode)
-        (error (text-mode)))
-      (doom-template-insert "SUBMIT_BUG_REPORT")
-      (goto-char (point-max))
-      (let ((pos (point)))
-        (save-excursion
-          (insert
-           "\n" (doom-info) "\n"
-           (if (and backtrace (not (string-empty-p backtrace)))
-               (format "\n<details>\n<summary>Backtrace</summary>\n\n```\n%s\n```\n</details>\n"
-                       backtrace)
-             "")))
-        (local-set-key (kbd "C-c C-c") #'doom--report-bug)
-        (local-set-key (kbd "C-c C-k") #'kill-current-buffer)
-        (setq header-line-format "C-c C-c to submit / C-c C-k to close")
-        ;;
-        (narrow-to-region (point-min) pos)
-        (goto-char (point-min)))
-      (pop-to-buffer buf))))
+  (browse-url "https://github.com/hlissner/doom-emacs/issues/new/choose"))
 
 
 ;;
@@ -379,42 +349,6 @@ will be automatically appended to the result."
   (setq doom--profiler (not doom--profiler)))
 
 ;;;###autoload
-(defun doom/profile-emacs ()
-  "Profile the startup time of Emacs in the background with ESUP.
-If INIT-FILE is non-nil, profile that instead of USER-INIT-FILE."
-  (interactive)
-  (require 'esup)
-  (let ((init-file esup-user-init-file))
-    (message "Starting esup...")
-    (esup-reset)
-    (setq esup-server-process (esup-server-create (esup-select-port)))
-    (setq esup-server-port (process-contact esup-server-process :service))
-    (message "esup process started on port %s" esup-server-port)
-    (let ((process-args
-           (append `("*esup-child*"
-                     "*esup-child*"
-                     ,esup-emacs-path
-                     "-Q"
-                     "--eval=(setq after-init-time nil)"
-                     "-L" ,esup-load-path)
-                   (when (bound-and-true-p early-init-file)
-                     `("-l" ,early-init-file))
-                   `("-l" "esup-child"
-                     ,(format "--eval=(let ((load-file-name \"%s\")) (esup-child-run \"%s\" \"%s\" %d))"
-                              init-file
-                              init-file
-                              esup-server-port
-                              esup-depth)
-                     "--eval=(doom-run-all-startup-hooks-h)"))))
-      (when esup-run-as-batch-p
-        (setq process-args (append process-args '("--batch"))))
-      (setq esup-child-process (apply #'start-process process-args)))
-    (set-process-sentinel esup-child-process 'esup-child-process-sentinel)))
-
-;;;###autoload
-(advice-add #'esup :override #'doom/profile-emacs)
-
-;;;###autoload
 (defun doom/toggle-debug-mode (&optional arg)
   "Toggle `debug-on-error' and `doom-debug-mode' for verbose logging."
   (interactive (list (or current-prefix-arg 'toggle)))
@@ -422,5 +356,11 @@ If INIT-FILE is non-nil, profile that instead of USER-INIT-FILE."
          (cond ((eq arg 'toggle) (not doom-debug-mode))
                ((> (prefix-numeric-value arg) 0)))))
     (setq doom-debug-mode value
-          debug-on-error value)
+          debug-on-error value
+          garbage-collection-messages value
+          use-package-verbose value
+          jka-compr-verbose value
+          lsp-log-io value
+          gcmh-verbose value
+          magit-refresh-verbose value)
     (message "Debug mode %s" (if value "on" "off"))))

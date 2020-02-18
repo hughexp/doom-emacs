@@ -11,6 +11,7 @@
     - [[#with-asdf][With ~asdf~]]
     - [[#arch-linux][Arch Linux]]
     - [[#gentoo-linux][Gentoo Linux]]
+    - [[#opensuse][openSUSE]]
 - [[#features][Features]]
 
 * Description
@@ -18,10 +19,10 @@ This module provides support for [[https://elixir-lang.org/][Elixir programming 
 or [[https://github.com/JakeBecker/elixir-ls/][elixir-ls]].
 
 ** Module flags
-| ~+lsp~ | add support for LSP |
++ ~+lsp~ Enable LSP support. Requires [[https://github.com/JakeBecker/elixir-ls/][elixir-ls]].
 
 ** Plugins
-+ [[https://github.com/rust-lang/rust-mode][elixir-mode]]
++ [[https://github.com/elixir-editors/emacs-elixir][elixir-mode]]
 + [[https://github.com/tonini/alchemist.el][alchemist.el]]
 + [[https://github.com/aaronjensen/flycheck-credo][flycheck-credo]]
 
@@ -32,7 +33,7 @@ manager or a version management tool such as [[https://github.com/asdf-vm/asdf-e
 If you want to add support for LSP ([[modules/tools/lsp][:tools lsp]]), be sure to install [[https://github.com/JakeBecker/elixir-ls/][elixir-ls]]
 and enable ~:tools lsp~ in your ~init.el~.
 
-To support linting with [[https://github.com/rrrene/credo][credo]], add ~:tools flycheck~ to your ~init.el~
+To support linting with [[https://github.com/rrrene/credo][credo]], add ~:checkers syntax~ to your ~init.el~
 ** Install Elixir
 *** With ~asdf~
 #+BEGIN_SRC sh
@@ -47,10 +48,15 @@ sudo pacman -S elixir
 #+BEGIN_SRC sh :dir /sudo::
 sudo emerge -v dev-lang/elixir
 #+END_SRC
+
+*** openSUSE
+#+BEGIN_SRC sh :dir /sudo::
+sudo zypper install elixir
+#+END_SRC
 * Features
 - Code completion (~:completion company~)
 - Documentation lookup (~:tools lookup~)
 - Mix integration
 - Phoenix support
 - ~iex~ integration (~:tools eval~)
-- Syntax checking (~:tools flycheck~, using [[https://github.com/aaronjensen/flycheck-credo][flycheck-credo]]~)
+- Syntax checking (~:checkers syntax~, using [[https://github.com/aaronjensen/flycheck-credo][flycheck-credo]]~)

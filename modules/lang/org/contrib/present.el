@@ -1,7 +1,7 @@
 ;;; lang/org/contrib/present.el -*- lexical-binding: t; -*-
 ;;;###if (featurep! +present)
 
-(defvar +org-present-text-scale 7
+(defvar +org-present-text-scale 6
   "The `text-scale-amount' for `org-tree-slide-mode'.")
 
 (after! ox
@@ -11,15 +11,10 @@
 ;;
 ;;; Packages
 
-(use-package! ox-reveal
+(use-package! org-re-reveal
   :after ox
   :init
-  ;; Fix #1127, where ox-reveal adds an errant entry to
-  ;; `org-structure-template-alist'
-  (setq org-reveal-note-key-char nil)
-  :config
-  (setq org-reveal-root "https://cdn.jsdelivr.net/npm/reveal.js@3/"
-        org-reveal-mathjax t))
+  (setq org-re-reveal-root "https://revealjs.com"))
 
 
 (use-package! org-tree-slide
@@ -29,17 +24,37 @@
   (setq org-tree-slide-skip-outline-level 2
         org-tree-slide-activate-message " "
         org-tree-slide-deactivate-message " "
-        org-tree-slide-modeline-display nil)
+        org-tree-slide-modeline-display nil
+        org-tree-slide-heading-emphasis t)
 
-  (map! :map org-tree-slide-mode-map
-        :n [right] #'org-tree-slide-move-next-tree
-        :n [left]  #'org-tree-slide-move-previous-tree)
+  (add-hook 'org-tree-slide-mode-after-narrow-hook #'org-display-inline-images)
+  (add-hook! 'org-tree-slide-mode-hook
+             #'+org-present-hide-blocks-h
+             #'+org-present-prettify-slide-h)
 
-  (add-hook! 'org-tree-slide-mode-after-narrow-hook
-             #'+org-present-detect-slide-h
-             #'+org-present-add-overlays-h
-             #'org-display-inline-images)
+  (when (featurep! :editor evil)
+    (map! :map org-tree-slide-mode-map
+          :n [C-right] #'org-tree-slide-move-next-tree
+          :n [C-left]  #'org-tree-slide-move-previous-tree)
+    (add-hook 'org-tree-slide-mode-hook #'evil-normalize-keymaps))
 
-  (add-hook 'org-tree-slide-mode-hook #'+org-present-init-org-tree-window-h)
-  (advice-add #'org-tree-slide--display-tree-with-narrow
-              :around #'+org-present*narrow-to-subtree))
+  (defadvice! +org-present--narrow-to-subtree-a (orig-fn &rest args)
+    "Narrow to the target subtree when you start the presentation."
+    :around #'org-tree-slide--display-tree-with-narrow
+    (cl-letf (((symbol-function #'org-narrow-to-subtree)
+               (lambda ()
+                 (save-excursion
+                   (save-match-data
+                     (org-with-limited-levels
+                      (narrow-to-region
+                       (progn
+                         (when (org-before-first-heading-p)
+                           (org-next-visible-heading 1))
+                         (ignore-errors (org-up-heading-all 99))
+                         (forward-line 1)
+                         (point))
+                       (progn (org-end-of-subtree t t)
+                              (when (and (org-at-heading-p) (not (eobp)))
+                                (backward-char 1))
+                              (point)))))))))
+      (apply orig-fn args))))

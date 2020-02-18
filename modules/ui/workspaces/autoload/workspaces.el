@@ -68,19 +68,18 @@ error if NAME doesn't exist."
   "Return a list of workspace structs (satisifes `+workspace-p')."
   ;; We don't use `hash-table-values' because it doesn't ensure order in older
   ;; versions of Emacs
-  (cdr (cl-loop for persp being the hash-values of *persp-hash*
-                collect persp)))
+  (cl-loop for name in persp-names-cache
+           if (gethash name *persp-hash*)
+           collect it))
 
 ;;;###autoload
 (defun +workspace-list-names ()
   "Return the list of names of open workspaces."
-  (mapcar #'safe-persp-name (+workspace-list)))
+  persp-names-cache)
 
 ;;;###autoload
 (defun +workspace-buffer-list (&optional persp)
   "Return a list of buffers in PERSP.
-
-The buffer list is ordered by recency (same as `buffer-list').
 
 PERSP can be a string (name of a workspace) or a workspace (satisfies
 `+workspace-p'). If nil or omitted, it defaults to the current workspace."
@@ -174,11 +173,12 @@ throws an error."
         (+workspace-new name)
       (error "%s is not an available workspace" name)))
   (let ((old-name (+workspace-current-name)))
-    (setq +workspace--last
-          (or (and (not (string= old-name persp-nil-name))
-                   old-name)
-              +workspaces-main))
-    (persp-frame-switch name)
+    (unless (equal old-name name)
+      (setq +workspace--last
+            (or (and (not (string= old-name persp-nil-name))
+                     old-name)
+                +workspaces-main))
+      (persp-frame-switch name))
     (equal (+workspace-current-name) name)))
 
 
@@ -240,15 +240,18 @@ workspace to delete."
       (if current-prefix-arg
           (completing-read (format "Delete workspace (default: %s): " current-name)
                            (+workspace-list-names)
-                           nil nil current-name)
+                           nil nil nil nil current-name)
         current-name))))
   (condition-case-unless-debug ex
+      ;; REVIEW refactor me
       (let ((workspaces (+workspace-list-names)))
         (if (not (member name workspaces))
             (+workspace-message (format "'%s' workspace doesn't exist" name) 'warn)
           (cond ((delq (selected-frame) (persp-frames-with-persp (get-frame-persp)))
                  (user-error "Can't close workspace, it's visible in another frame"))
-                ((> (length workspaces) 1)
+                ((not (equal (+workspace-current-name) name))
+                 (+workspace-delete name))
+                ((cdr workspaces)
                  (+workspace-delete name)
                  (+workspace-switch
                   (if (+workspace-exists-p +workspace--last)
@@ -260,18 +263,25 @@ workspace to delete."
                  (+workspace-switch +workspaces-main t)
                  (unless (string= (car workspaces) +workspaces-main)
                    (+workspace-delete name))
-                 (doom/kill-all-buffers)))
+                 (doom/kill-all-buffers (doom-buffer-list))))
           (+workspace-message (format "Deleted '%s' workspace" name) 'success)))
     ('error (+workspace-error ex t))))
 
 ;;;###autoload
-(defun +workspace/kill-session ()
+(defun +workspace/kill-session (&optional interactive)
   "Delete the current session, all workspaces, windows and their buffers."
-  (interactive)
-  (unless (cl-every #'+workspace-delete (+workspace-list-names))
-    (+workspace-error "Could not clear session"))
-  (+workspace-switch +workspaces-main t)
-  (doom/kill-all-buffers))
+  (interactive (list t))
+  (let ((windows (length (window-list)))
+        (persps (length (+workspace-list-names)))
+        (buffers 0))
+    (let ((persp-autokill-buffer-on-remove t))
+      (unless (cl-every #'+workspace-delete (+workspace-list-names))
+        (+workspace-error "Could not clear session")))
+    (+workspace-switch +workspaces-main t)
+    (setq buffers (doom/kill-all-buffers (buffer-list)))
+    (when interactive
+      (message "Killed %d workspace(s), %d window(s) & %d buffer(s)"
+               persps windows buffers))))
 
 ;;;###autoload
 (defun +workspace/kill-session-and-quit ()
@@ -302,7 +312,12 @@ workspace, otherwise the new workspace is blank."
 end of the workspace list."
   (interactive
    (list (or current-prefix-arg
-             (completing-read "Switch to workspace: " (+workspace-list-names)))))
+             (if (featurep! :completion ivy)
+                 (ivy-read "Switch to workspace: "
+                           (+workspace-list-names)
+                           :caller #'+workspace/switch-to
+                           :preselect (+workspace-current-name))
+               (completing-read "Switch to workspace: " (+workspace-list-names))))))
   (when (and (stringp index)
              (string-match-p "^[0-9]+$" index))
     (setq index (string-to-number index)))
@@ -315,9 +330,7 @@ end of the workspace list."
                    (error "No workspace at #%s" (1+ index)))
                  (+workspace-switch dest)))
               ((stringp index)
-               (unless (member index names)
-                 (error "No workspace named %s" index))
-               (+workspace-switch index))
+               (+workspace-switch index t))
               (t
                (error "Not a valid index: %s" index)))
         (unless (called-interactively-p 'interactive)
@@ -328,8 +341,9 @@ end of the workspace list."
 
 ;;;###autoload
 (dotimes (i 9)
-  (fset (intern (format "+workspace/switch-to-%d" i))
-        (lambda () (interactive) (+workspace/switch-to i))))
+  (defalias (intern (format "+workspace/switch-to-%d" i))
+    (lambda () (interactive) (+workspace/switch-to i))
+    (format "Switch to workspace #%d" (1+ i))))
 
 ;;;###autoload
 (defun +workspace/switch-to-final ()
@@ -389,6 +403,31 @@ the next."
                    (+workspace/delete current-persp-name))))
 
               ((+workspace-error "Can't delete last workspace" t)))))))
+
+;;;###autoload
+(defun +workspace/swap-left (&optional count)
+  "Swap the current workspace with the COUNTth workspace on its left."
+  (interactive "p")
+  (let* ((current-name (+workspace-current-name))
+         (count (or count 1))
+         (index (- (cl-position current-name persp-names-cache :test #'equal)
+                   count))
+         (names (remove current-name persp-names-cache)))
+    (unless names
+      (user-error "Only one workspace"))
+    (let ((index (min (max 0 index) (length names))))
+      (setq persp-names-cache
+            (append (cl-subseq names 0 index)
+                    (list current-name)
+                    (cl-subseq names index))))
+    (when (called-interactively-p 'any)
+      (+workspace/display))))
+
+;;;###autoload
+(defun +workspace/swap-right (&optional count)
+  "Swap the current workspace with the COUNTth workspace on its right."
+  (interactive "p")
+  (funcall-interactively #'+workspace/swap-left (- count)))
 
 
 ;;
@@ -491,10 +530,9 @@ This be hooked to `projectile-after-switch-project-hook'."
         (if (and (not (null +workspaces-on-switch-project-behavior))
                  (or (eq +workspaces-on-switch-project-behavior t)
                      (+workspace-buffer-list)))
-            (let* (persp-p
-                   (persp
+            (let* ((persp
                     (let ((project-name (doom-project-name +workspaces--project-dir)))
-                      (or (setq persp-p (+workspace-get project-name t))
+                      (or (+workspace-get project-name t)
                           (+workspace-new project-name))))
                    (new-name (persp-name persp)))
               (+workspace-switch new-name)
@@ -508,6 +546,8 @@ This be hooked to `projectile-after-switch-project-hook'."
           (with-current-buffer (doom-fallback-buffer)
             (setq default-directory +workspaces--project-dir)
             (message "Switched to '%s'" (doom-project-name +workspaces--project-dir)))
+          (with-demoted-errors "Workspace error: %s"
+            (+workspace-rename (+workspace-current-name) (doom-project-name +workspaces--project-dir)))
           (unless current-prefix-arg
             (funcall +workspaces-switch-project-function +workspaces--project-dir)))
       (setq +workspaces--project-dir nil))))

@@ -4,13 +4,18 @@
 (add-to-list 'TeX-view-program-selection '(output-pdf "preview-pane") 'append)
 (add-to-list 'TeX-view-program-list '("preview-pane" latex-preview-pane-mode))
 
-(dolist (viewer +latex-viewers)
+(dolist (viewer (reverse +latex-viewers))
   (pcase viewer
     (`skim
-     (when (and IS-MAC
-                (file-exists-p! (or "/Applications/Skim.app"
-                                    "~/Applications/Skim.app")))
-       (add-to-list 'TeX-view-program-selection '(output-pdf "Skim"))))
+     (when-let
+         (app-path
+          (and IS-MAC
+               (file-exists-p! (or "/Applications/Skim.app"
+                                   "~/Applications/Skim.app"))))
+       (add-to-list 'TeX-view-program-selection '(output-pdf "Skim"))
+       (add-to-list 'TeX-view-program-list
+                    (list "Skim" (format "%s/Contents/SharedSupport/displayline -b -g %%n %%o %%b"
+                                         app-path)))))
 
     (`sumatrapdf
      (when (and IS-WINDOWS
@@ -39,7 +44,7 @@
          ;; PDF Tools isn't in `TeX-view-program-list-builtin' on macs
          (add-to-list 'TeX-view-program-list '("PDF Tools" TeX-pdf-tools-sync-view)))
        ;; Update PDF buffers after successful LaTeX runs
-       (add-hook 'TeX-after-compilation-finished-function #'TeX-revert-document-buffer)))))
+       (add-hook 'TeX-after-compilation-finished-functions #'TeX-revert-document-buffer)))))
 
 
 (after! latex-preview-pane

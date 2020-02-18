@@ -1,8 +1,8 @@
 ;;; tools/ein/autoload/hydra.el -*- lexical-binding: t; -*-
 ;;;###if (featurep! :ui hydra)
 
-;;;###autoload (autoload '+ein/hydra/body "tools/ein/autoload" nil t)
-(defhydra +ein/hydra (:hint t :color red)
+;;;###autoload (autoload '+ein/hydra/body "tools/ein/autoload/hydra" nil t)
+(defhydra +ein/hydra (:hint nil :color red)
     "
  Operations on Cells^^^^^^            Other
  ----------------------------^^^^^^   ----------------------------------^^^^

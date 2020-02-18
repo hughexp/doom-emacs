@@ -31,11 +31,12 @@
   (evil-visual-restore))
 
 ;;;###autoload
-(defun +evil/paste-preserve-register ()
-  "Call `evil-paste-after' without overwriting the clipboard (by writing to the
-0 register instead). This allows you to paste the same text again afterwards."
+(defun +evil/alt-paste ()
+  "Call `evil-paste-after' but invert `evil-kill-on-visual-paste'.
+By default, this replaces the selection with what's in the clipboard without
+replacing its contents."
   (interactive)
-  (let ((evil-this-register ?0))
+  (let ((evil-kill-on-visual-paste (not evil-kill-on-visual-paste)))
     (call-interactively #'evil-paste-after)))
 
 (defun +evil--window-swap (direction)
@@ -75,28 +76,35 @@ the only window, use evil-window-move-* (e.g. `evil-window-move-far-left')."
       (select-window that-window))))
 
 ;;;###autoload
-(defun +evil/window-move-left () "See `+evil--window-swap'"  (interactive) (+evil--window-swap 'left))
+(defun +evil/window-move-left ()
+  "Swap windows to the left."
+  (interactive) (+evil--window-swap 'left))
 ;;;###autoload
-(defun +evil/window-move-right () "See `+evil--window-swap'" (interactive) (+evil--window-swap 'right))
+(defun +evil/window-move-right ()
+  "Swap windows to the right"
+  (interactive) (+evil--window-swap 'right))
 ;;;###autoload
-(defun +evil/window-move-up () "See `+evil--window-swap'"    (interactive) (+evil--window-swap 'up))
+(defun +evil/window-move-up ()
+  "Swap windows upward."
+  (interactive) (+evil--window-swap 'up))
 ;;;###autoload
-(defun +evil/window-move-down () "See `+evil--window-swap'"  (interactive) (+evil--window-swap 'down))
+(defun +evil/window-move-down ()
+  "Swap windows downward."
+  (interactive) (+evil--window-swap 'down))
 
 ;;;###autoload
-(defun +evil/easymotion ()
-  "Invoke and lazy-load `evil-easymotion' without compromising which-key
-integration."
-  (interactive)
+(defun +evil/easymotion (&optional state keymap)
+  "Invoke `evil-easymotion' lazily without compromising which-key integration."
+  (interactive (list 'motion 'global))
   (let ((prefix (this-command-keys)))
-    (evil-define-key* 'motion 'global prefix nil)
-    (evilem-default-keybindings (key-description prefix))
+    (require 'evil-easymotion)
+    (evil-define-key* state keymap prefix evilem-map)
     (setq prefix-arg current-prefix-arg
           unread-command-events
           (mapcar (lambda (e) (cons t e))
                   (vconcat (when evil-this-operator
                              (where-is-internal evil-this-operator
-                                                evil-normal-state-map
+                                                nil
                                                 t))
                            prefix)))))
 
@@ -135,79 +143,31 @@ integration."
 
 ;;;###autoload (autoload '+evil:narrow-buffer "editor/evil/autoload/evil" nil t)
 (evil-define-operator +evil:narrow-buffer (beg end &optional bang)
-  "Wrapper around `doom/clone-and-narrow-buffer'."
+  "Narrow the buffer to region between BEG and END.
+
+Widens narrowed buffers first. If BANG, use indirect buffer clones instead."
   :move-point nil
   (interactive "<r><!>")
-  (doom/clone-and-narrow-buffer beg end bang))
+  (if (not bang)
+      (if (buffer-narrowed-p)
+          (widen)
+        (narrow-to-region beg end))
+    (when (buffer-narrowed-p)
+      (doom/widen-indirectly-narrowed-buffer t))
+    (doom/narrow-buffer-indirectly beg end)))
 
-;;;###autoload
-(defun +evil/next-beginning-of-method (count)
-  "Jump to the beginning of the COUNT-th method/function after point."
-  (interactive "p")
-  (beginning-of-defun (- count)))
-
-;;;###autoload
-(defun +evil/previous-beginning-of-method (count)
-  "Jump to the beginning of the COUNT-th method/function before point."
-  (interactive "p")
-  (beginning-of-defun count))
-
-;;;###autoload
-(defalias #'+evil/next-end-of-method #'end-of-defun
-  "Jump to the end of the COUNT-th method/function after point.")
-
-;;;###autoload
-(defun +evil/previous-end-of-method (count)
-  "Jump to the end of the COUNT-th method/function before point."
-  (interactive "p")
-  (end-of-defun (- count)))
-
-;;;###autoload
-(defun +evil/next-preproc-directive (count)
-  "Jump to the COUNT-th preprocessor directive after point.
-
-By default, this only recognizes C preproc directives. To change this see
-`+evil-preprocessor-regexp'."
-  (interactive "p")
-  ;; TODO More generalized search, to support directives in other languages?
-  (if (re-search-forward +evil-preprocessor-regexp nil t count)
-      (goto-char (match-beginning 0))
-    (user-error "No preprocessor directives %s point"
-                (if (> count 0) "after" "before"))))
-
-;;;###autoload
-(defun +evil/previous-preproc-directive (count)
-  "Jump to the COUNT-th preprocessor directive before point.
-
-See `+evil/next-preproc-directive' for details."
-  (interactive "p")
-  (+evil/next-preproc-statement (- count)))
-
-;;;###autoload
-(defun +evil/next-comment (count)
-  "Jump to the beginning of the COUNT-th commented region after point."
-  (interactive "p")
-  (let ((orig-pt (point)))
-    (require 'newcomment)
-    (dotimes (_ (abs count))
-      (cond ((> count 0)
-             (while (and (not (eobp)) (sp-point-in-comment))
-               (next-line))
-             (unless (comment-search-forward (point-max) 'noerror)
-               (goto-char orig-pt)
-               (user-error "No comment after point")))
-            (t
-             (while (and (not (bobp)) (sp-point-in-comment))
-               (previous-line))
-             (unless (comment-search-backward nil 'noerror)
-               (goto-char orig-pt)
-               (user-error "No comment before point")))))))
-
-;;;###autoload
-(defun +evil/previous-comment (count)
-  "Jump to the beginning of the COUNT-th commented region before point."
-  (interactive "p")
-  (+evil/next-comment (- count)))
+;;;###autoload (autoload '+evil:yank-unindented "editor/evil/autoload/evil" nil t)
+(evil-define-operator +evil:yank-unindented (beg end _type _register _yank-handler)
+  "Saves the (reindented) characters in motion into the kill-ring."
+  :move-point nil
+  :repeat nil
+  (interactive "<R><x><y>")
+  (let ((indent (save-excursion (goto-char beg) (current-indentation)))
+        (text (buffer-substring beg end)))
+    (with-temp-buffer
+      (insert text)
+      (indent-rigidly (point-min) (point-max) (- indent))
+      (evil-yank (point-min) (point-max)))))
 
 
 ;;

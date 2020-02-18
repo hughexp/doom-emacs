@@ -11,7 +11,7 @@ Emacs.")
   "If non-nil, non-projects are purged from the cache on `kill-emacs-hook'.")
 
 (defvar doom-projectile-fd-binary
-  (or (cl-find-if #'executable-find '("fd" "fdfind"))
+  (or (cl-find-if #'executable-find '("fdfind" "fd"))
       "fd")
   "name of `fd-find' executable binary")
 
@@ -27,19 +27,15 @@ Emacs.")
   :commands (projectile-project-root
              projectile-project-name
              projectile-project-p
-             projectile-add-known-project) ; TODO PR autoload upstream
+             projectile-locate-dominating-file)
   :init
   (setq projectile-cache-file (concat doom-cache-dir "projectile.cache")
-        projectile-enable-caching (not noninteractive)
-        projectile-known-projects-file (concat doom-cache-dir "projectile.projects")
-        projectile-require-project-root t
+        projectile-enable-caching doom-interactive-mode
         projectile-globally-ignored-files '(".DS_Store" "Icon" "TAGS")
         projectile-globally-ignored-file-suffixes '(".elc" ".pyc" ".o")
-        projectile-ignored-projects '("~/" "/tmp")
         projectile-kill-buffers-filter 'kill-only-files
-        projectile-files-cache-expire 604800 ; expire after a week
-        projectile-sort-order 'recentf
-        projectile-use-git-grep t) ; use git-grep for text searches
+        projectile-known-projects-file (concat doom-cache-dir "projectile.projects")
+        projectile-ignored-projects '("~/" "/tmp"))
 
   (global-set-key [remap evil-jump-to-tag] #'projectile-find-tag)
   (global-set-key [remap find-tag]         #'projectile-find-tag)
@@ -47,9 +43,43 @@ Emacs.")
   :config
   (projectile-mode +1)
 
-  ;; a more generic project root file
-  (push ".project" projectile-project-root-files-bottom-up)
+  ;; Projectile runs four functions to determine the root (in this order):
+  ;;
+  ;; + `projectile-root-local' -> consults the `projectile-project-root'
+  ;;   variable for an explicit path.
+  ;; + `projectile-root-bottom-up' -> consults
+  ;;   `projectile-project-root-files-bottom-up'; searches from / to your
+  ;;   current directory for certain files (including .project and .git)
+  ;; + `projectile-root-top-down' -> consults `projectile-project-root-files';
+  ;;   searches from the current directory down to / for certain project
+  ;;   markers, like package.json, setup.py, or Cargo.toml
+  ;; + `projectile-root-top-down-recurring' -> consults
+  ;;   `projectile-project-root-files-top-down-recurring'; searches from the
+  ;;   current directory down to / for a directory that has .svn or Makefile but
+  ;;   doesn't have a parent with one of those files.
+  ;;
+  ;; In the interest of performance, we reduce the number of project root marker
+  ;; files/directories projectile searches for when resolving the project root.
+  (setq projectile-project-root-files-bottom-up
+        (append '(".project"     ; doom project marker
+                  ".git")        ; Git VCS root dir
+                (when (executable-find "hg")
+                  '(".hg"))      ; Mercurial VCS root dir
+                (when (executable-find "bzr")
+                  '(".bzr")))    ; Bazaar VCS root dir
+        ;; This will be filled by other modules. We build this list manually so
+        ;; projectile doesn't perform so many file checks every time it resolves
+        ;; a project's root -- particularly when a file has no project.
+        projectile-project-root-files '()
+        projectile-project-root-files-top-down-recurring '("Makefile"))
+
   (push (abbreviate-file-name doom-local-dir) projectile-globally-ignored-directories)
+
+  ;; Disable commands that won't work, as is, and that Doom already provides a
+  ;; better alternative for.
+  (put 'projectile-ag 'disabled "Use +{ivy,helm}/project-search instead")
+  (put 'projectile-ripgrep 'disabled "Use +{ivy,helm}/project-search instead")
+  (put 'projectile-grep 'disabled "Use +{ivy,helm}/project-search instead")
 
   ;; Treat current directory in dired as a "file in a project" and track it
   (add-hook 'dired-before-readin-hook #'projectile-track-known-projects-find-file-hook)
@@ -67,7 +97,7 @@ b) represent blacklisted directories that are too big, change too often or are
    private. (see `doom-projectile-cache-blacklist'),
 c) are not valid projectile projects."
       (when (and (bound-and-true-p projectile-projects-cache)
-                 (not noninteractive))
+                 doom-interactive-mode)
         (cl-loop with blacklist = (mapcar #'file-truename doom-projectile-cache-blacklist)
                  for proot in (hash-table-keys projectile-projects-cache)
                  if (or (not (stringp proot))
@@ -89,7 +119,7 @@ c) are not valid projectile projects."
   (let ((default-directory "~"))
     (when (cl-find-if #'projectile-file-exists-p
                       projectile-project-root-files-bottom-up)
-      (message "HOME appears to be a project. Disabling bottom-up root search.")
+      (doom-log "HOME appears to be a project. Disabling bottom-up root search.")
       (setq projectile-project-root-files
             (append projectile-project-root-files-bottom-up
                     projectile-project-root-files)
@@ -100,10 +130,11 @@ c) are not valid projectile projects."
    ;; that is significantly faster than git ls-files or find, and it respects
    ;; .gitignore. This is recommended in the projectile docs.
    ((executable-find doom-projectile-fd-binary)
-    (setq projectile-git-command (concat
-                                  doom-projectile-fd-binary
-                                  " . --color=never --type f -0 -H -E .git")
-          projectile-generic-command projectile-git-command
+    (setq projectile-generic-command
+          (format "%s . --color=never --type f -0 -H -E .git"
+                  doom-projectile-fd-binary)
+          projectile-git-command projectile-generic-command
+          projectile-git-submodule-command nil
           ;; ensure Windows users get fd's benefits
           projectile-indexing-method 'alien))
 
@@ -113,21 +144,15 @@ c) are not valid projectile projects."
           (concat "rg -0 --files --color=never --hidden"
                   (cl-loop for dir in projectile-globally-ignored-directories
                            concat (format " --glob '!%s'" dir)))
+          projectile-git-command projectile-generic-command
+          projectile-git-submodule-command nil
           ;; ensure Windows users get rg's benefits
-          projectile-indexing-method 'alien)
-    ;; fix breakage on windows in git projects
-    (unless (executable-find "tr")
-      (setq projectile-git-submodule-command nil))))
+          projectile-indexing-method 'alien))
 
-  (defadvice! doom--projectile-cache-timers-a ()
-    "Persist `projectile-projects-cache-time' across sessions, so that
-`projectile-files-cache-expire' checks won't reset when restarting Emacs."
-    :before #'projectile-serialize-cache
-    (projectile-serialize projectile-projects-cache-time doom-projectile-cache-timer-file))
-  ;; Restore it
-  (when (file-readable-p doom-projectile-cache-timer-file)
-    (setq projectile-projects-cache-time
-          (projectile-unserialize doom-projectile-cache-timer-file)))
+   ;; Fix breakage on windows in git projects with submodules, since Windows
+   ;; doesn't have tr
+   (IS-WINDOWS
+    (setq projectile-git-submodule-command nil)))
 
   (defadvice! doom--projectile-default-generic-command-a (orig-fn &rest args)
     "If projectile can't tell what kind of project you're in, it issues an error
@@ -143,12 +168,11 @@ the command instead."
   ;; Projectile root-searching functions can cause an infinite loop on TRAMP
   ;; connections, so disable them.
   ;; TODO Is this still necessary?
-  (defadvice! doom--projectile-locate-dominating-file-a (orig-fn file name)
+  (defadvice! doom--projectile-locate-dominating-file-a (file _name)
     "Don't traverse the file system if on a remote connection."
-    :around #'projectile-locate-dominating-file
-    (when (and (stringp file)
-               (not (file-remote-p file nil t)))
-      (funcall orig-fn file name))))
+    :before-while #'projectile-locate-dominating-file
+    (and (stringp file)
+         (not (file-remote-p file nil t)))))
 
 
 ;;

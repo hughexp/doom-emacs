@@ -2,11 +2,11 @@
 ;;;###if (featurep! +dragndrop)
 
 ;;;###autoload
-(defun +org-dragndrop-download-dnd (uri action)
-  "TODO"
+(defun +org-dragndrop-download-dnd-fn (uri action)
+  "Handle file links and base64 data uris."
   (if (eq major-mode 'org-mode)
-      (+org-attach/uri uri)
+      (+org/attach-file-and-insert-link uri)
     (let ((dnd-protocol-alist
-           (rassq-delete-all '+org-attach-download-dnd
+           (rassq-delete-all '+org-dragndrop-download-dnd-fn
                              (copy-alist dnd-protocol-alist))))
       (dnd-handle-one-url nil action uri))))

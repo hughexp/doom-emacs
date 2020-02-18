@@ -3,6 +3,9 @@
 ;;
 ;;; Variables
 
+(defvar doom-init-theme-p nil
+  "If non-nil, a theme as been loaded.")
+
 (defvar doom-theme nil
   "A symbol representing the Emacs theme to load at startup.
 
@@ -170,9 +173,17 @@ read-only or not file-visiting."
 
 (setq hscroll-margin 2
       hscroll-step 1
-      scroll-conservatively 10
+      ;; Emacs spends too much effort recentering the screen if you scroll the
+      ;; cursor more than N lines past window edges (where N is the settings of
+      ;; `scroll-conservatively'). This is especially slow in larger files
+      ;; during large-scale scrolling commands. If kept over 100, the window is
+      ;; never automatically recentered.
+      scroll-conservatively 101
       scroll-margin 0
       scroll-preserve-screen-position t
+      ;; Reduce cursor lag by a tiny bit by not auto-adjusting `window-vscroll'
+      ;; for tall lines.
+      auto-window-vscroll nil
       ;; mouse
       mouse-wheel-scroll-amount '(5 ((shift) . 2))
       mouse-wheel-progressive-speed nil)  ; don't accelerate scrolling
@@ -210,19 +221,21 @@ read-only or not file-visiting."
 
 (setq confirm-nonexistent-file-or-buffer t)
 
-(defadvice! doom--switch-to-fallback-buffer-maybe-a (orig-fn)
+(defadvice! doom--switch-to-fallback-buffer-maybe-a (&rest _)
   "Switch to `doom-fallback-buffer' if on last real buffer.
 
 Advice for `kill-current-buffer'. If in a dedicated window, delete it. If there
 are no real buffers left OR if all remaining buffers are visible in other
 windows, switch to `doom-fallback-buffer'. Otherwise, delegate to original
 `kill-current-buffer'."
-  :around #'kill-current-buffer
+  :before-until #'kill-current-buffer
   (let ((buf (current-buffer)))
     (cond ((window-dedicated-p)
-           (delete-window))
+           (delete-window)
+           t)
           ((eq buf (doom-fallback-buffer))
-           (message "Can't kill the fallback buffer."))
+           (message "Can't kill the fallback buffer.")
+           t)
           ((doom-real-buffer-p buf)
            (if (and buffer-file-name
                     (buffer-modified-p buf)
@@ -241,8 +254,8 @@ windows, switch to `doom-fallback-buffer'. Otherwise, delegate to original
                  (switch-to-buffer (doom-fallback-buffer)))
                (unless (delq (selected-window) (get-buffer-window-list buf nil t))
                  (kill-buffer buf)))
-             (run-hooks 'buffer-list-update-hook)))
-          ((funcall orig-fn)))))
+             (run-hooks 'buffer-list-update-hook))
+           t))))
 
 
 ;;
@@ -264,40 +277,46 @@ windows, switch to `doom-fallback-buffer'. Otherwise, delegate to original
 (setq frame-title-format '("%b – Doom Emacs")
       icon-title-format frame-title-format)
 
-;; Don't resize emacs in steps, it looks weird.
+;; Don't resize windows & frames in steps; it's prohibitive to prevent the user
+;; from resizing it to exact dimensions, and looks weird.
 (setq window-resize-pixelwise t
       frame-resize-pixelwise t)
 
-(unless EMACS27+  ; We already do this in early-init.el
-  ;; Disable tool and scrollbars; Doom encourages keyboard-centric workflows, so
-  ;; these are just clutter (the scrollbar also impacts Emacs' performance).
+(when (bound-and-true-p tool-bar-mode)
+  ;; We do this in early-init.el too, but in case the user is on Emacs 26 we do
+  ;; it here too: disable tool and scrollbars, as Doom encourages
+  ;; keyboard-centric workflows, so these are just clutter (the scrollbar also
+  ;; impacts performance).
   (push '(menu-bar-lines . 0) default-frame-alist)
   (push '(tool-bar-lines . 0) default-frame-alist)
   (push '(vertical-scroll-bars) default-frame-alist))
 
-;; Sets `ns-appearance' and `ns-transparent-titlebar' on GUI frames (and fixes
-;; mismatching text color in the frame title)
 (when IS-MAC
   ;; Curse Lion and its sudden but inevitable fullscreen mode!
   ;; NOTE Meaningless to railwaycat's emacs-mac build
-  (setq ns-use-native-fullscreen nil
-        ;; Visit files opened outside of Emacs in existing frame, rather than a
-        ;; new one
-        ns-pop-up-frames nil)
+  (setq ns-use-native-fullscreen nil)
 
-  ;; Sets ns-transparent-titlebar and ns-appearance frame parameters as is
-  ;; appropriate for the loaded theme.
+  ;; Visit files opened outside of Emacs in existing frame, not a new one
+  (setq ns-pop-up-frames nil)
+
+  ;; Sets `ns-transparent-titlebar' and `ns-appearance' frame parameters so
+  ;; window borders will match the enabled theme.
   (and (or (daemonp)
            (display-graphic-p))
        (require 'ns-auto-titlebar nil t)
        (ns-auto-titlebar-mode +1))
 
-  (add-hook! 'after-make-frame-functions
-    (defun doom-init-menu-bar-in-gui-frames-h (frame)
-      "On MacOS, the menu bar isn't part of the frame. Disabling it makes MacOS
-treat Emacs as a non-application window."
-      (when (display-graphic-p frame)
-        (set-frame-parameter frame 'menu-bar-lines 1)))))
+  ;; HACK On MacOS, disabling the menu bar makes MacOS treat Emacs as a
+  ;;      non-application window -- which means it doesn't automatically capture
+  ;;      focus when it is started, among other things. We enable menu-bar-lines
+  ;;      there, but we still want it disabled in terminal frames because there
+  ;;      it activates an ugly menu bar.
+  (add-hook! '(window-setup-hook after-make-frame-functions)
+    (defun doom-init-menu-bar-in-gui-frames-h (&optional frame)
+      "Re-enable menu-bar-lines in GUI frames."
+      (when-let (frame (or frame (selected-frame)))
+        (when (display-graphic-p frame)
+          (set-frame-parameter frame 'menu-bar-lines 1))))))
 
 ;; The native border "consumes" a pixel of the fringe on righter-most splits,
 ;; `window-divider' does not. Available since Emacs 25.1.
@@ -311,13 +330,15 @@ treat Emacs as a non-application window."
 
 ;; always avoid GUI
 (setq use-dialog-box nil)
-;; Don't display floating tooltips; display their contents in the echo-area.
-(if (bound-and-true-p tooltip-mode) (tooltip-mode -1))
-;; native linux tooltips are ugly
+;; Don't display floating tooltips; display their contents in the echo-area,
+;; because native tooltips are ugly.
+(when (bound-and-true-p tooltip-mode)
+  (tooltip-mode -1))
+;; ...especially on linux
 (when IS-LINUX
   (setq x-gtk-use-system-tooltips nil))
 
- ;; Favor vertical splits over horizontal ones
+ ;; Favor vertical splits over horizontal ones. Screens are usually wide.
 (setq split-width-threshold 160
       split-height-threshold nil)
 
@@ -326,7 +347,7 @@ treat Emacs as a non-application window."
 ;;; Minibuffer
 
 ;; Allow for minibuffer-ception. Sometimes we need another minibuffer command
-;; _while_ we're in the minibuffer.
+;; while we're in the minibuffer.
 (setq enable-recursive-minibuffers t)
 
 ;; Show current key-sequence in minibuffer, like vim does. Any feedback after
@@ -339,12 +360,7 @@ treat Emacs as a non-application window."
       ;; But don't let the minibuffer grow beyond this size
       max-mini-window-height 0.15)
 
-;; Disable help mouse-overs for mode-line segments (i.e. :help-echo text).
-;; They're generally unhelpful and only add confusing visual clutter.
-(setq mode-line-default-help-echo nil
-      show-help-function nil)
-
-;; y/n is easier to type than yes/no
+;; Typing yes/no is obnoxious when y/n will do
 (fset #'yes-or-no-p #'y-or-n-p)
 
 ;; Try really hard to keep the cursor from getting stuck in the read-only prompt
@@ -360,9 +376,7 @@ treat Emacs as a non-application window."
 (setq ansi-color-for-comint-mode t)
 
 
-(use-package! compile
-  :defer t
-  :config
+(after! compile
   (setq compilation-always-kill t       ; kill compilation process before starting another
         compilation-ask-about-save nil  ; save all buffers on `compile'
         compilation-scroll-output 'first-error)
@@ -370,13 +384,11 @@ treat Emacs as a non-application window."
   (add-hook 'compilation-filter-hook #'doom-apply-ansi-color-to-compilation-buffer-h))
 
 
-(use-package! ediff
-  :defer t
-  :init
+(after! ediff
   (setq ediff-diff-options "-w" ; turn off whitespace checking
         ediff-split-window-function #'split-window-horizontally
         ediff-window-setup-function #'ediff-setup-windows-plain)
-  :config
+
   (defvar doom--ediff-saved-wconf nil)
   ;; Restore window config after quitting ediff
   (add-hook! 'ediff-before-setup-hook
@@ -388,6 +400,13 @@ treat Emacs as a non-application window."
         (set-window-configuration doom--ediff-saved-wconf)))))
 
 
+(use-package! goto-addr
+  :hook (text-mode . goto-address-mode)
+  :hook (prog-mode . goto-address-prog-mode)
+  :config
+  (define-key goto-address-highlight-keymap (kbd "RET") #'goto-address-at-point))
+
+
 (use-package! hl-line
   ;; Highlights the current line
   :hook ((prog-mode text-mode conf-mode) . hl-line-mode)
@@ -397,26 +416,31 @@ treat Emacs as a non-application window."
   (setq hl-line-sticky-flag nil
         global-hl-line-sticky-flag nil)
 
-  ;; Disable `hl-line' in evil-visual mode (temporarily). `hl-line' can make the
-  ;; selection region harder to see while in evil visual mode.
-  (after! evil
-    (defvar doom-buffer-hl-line-mode nil)
-    (add-hook! 'evil-visual-state-entry-hook
-      (defun doom-disable-hl-line-h ()
-        (when hl-line-mode
-          (setq-local doom-buffer-hl-line-mode t)
-          (hl-line-mode -1))))
-    (add-hook! 'evil-visual-state-exit-hook
-      (defun doom-enable-hl-line-maybe-h ()
-        (when doom-buffer-hl-line-mode
-          (hl-line-mode +1))))))
+  ;; Temporarily disable `hl-line' when selection is active, since it doesn't
+  ;; serve much purpose when the selection is so much more visible.
+  (defvar doom-buffer-hl-line-mode nil)
+
+  (add-hook! '(evil-visual-state-entry-hook activate-mark-hook)
+    (defun doom-disable-hl-line-h ()
+      (when hl-line-mode
+        (setq-local doom-buffer-hl-line-mode t)
+        (hl-line-mode -1))))
+
+  (add-hook! '(evil-visual-state-exit-hook deactivate-mark-hook)
+    (defun doom-enable-hl-line-maybe-h ()
+      (when doom-buffer-hl-line-mode
+        (hl-line-mode +1)))))
 
 
 (use-package! winner
   ;; undo/redo changes to Emacs' window layout
   :after-call after-find-file doom-switch-window-hook
-  :preface (defvar winner-dont-bind-my-keys t)
-  :config (winner-mode +1)) ; I'll bind keys myself
+  :preface (defvar winner-dont-bind-my-keys t) ; I'll bind keys myself
+  :config (winner-mode +1)
+  (appendq! winner-boring-buffers
+            '("*Compile-Log*" "*inferior-lisp*" "*Fuzzy Completions*"
+              "*Apropos*" "*Help*" "*cvs*" "*Buffer List*" "*Ibuffer*"
+              "*esh command on file*")))
 
 
 (use-package! paren
@@ -425,7 +449,8 @@ treat Emacs as a non-application window."
   :config
   (setq show-paren-delay 0.1
         show-paren-highlight-openparen t
-        show-paren-when-point-inside-paren t)
+        show-paren-when-point-inside-paren t
+        show-paren-when-point-in-periphery t)
   (show-paren-mode +1))
 
 
@@ -450,21 +475,29 @@ treat Emacs as a non-application window."
              all-the-icons-wicon
              all-the-icons-material
              all-the-icons-alltheicon)
-  :init
-  (defadvice! doom--disable-all-the-icons-in-tty-a (orig-fn &rest args)
-    "Return a blank string in tty Emacs, which doesn't support multiple fonts."
-    :around '(all-the-icons-octicon all-the-icons-material
-              all-the-icons-faicon all-the-icons-fileicon
-              all-the-icons-wicon all-the-icons-alltheicon)
-    (if (display-multi-font-p)
-        (apply orig-fn args)
-      "")))
+  :config
+  (cond ((daemonp)
+         (defadvice! doom--disable-all-the-icons-in-tty-a (orig-fn &rest args)
+           "Return a blank string in tty Emacs, which doesn't support multiple fonts."
+           :around '(all-the-icons-octicon all-the-icons-material
+                                           all-the-icons-faicon all-the-icons-fileicon
+                                           all-the-icons-wicon all-the-icons-alltheicon)
+           (if (or (not after-init-time) (display-multi-font-p))
+               (apply orig-fn args)
+             "")))
+        ((not (display-graphic-p))
+         (defadvice! doom--disable-all-the-icons-in-tty-a (&rest _)
+           "Return a blank string for tty users."
+           :override '(all-the-icons-octicon all-the-icons-material
+                       all-the-icons-faicon all-the-icons-fileicon
+                       all-the-icons-wicon all-the-icons-alltheicon)
+           ""))))
 
 ;;;###package hide-mode-line-mode
 (add-hook! '(completion-list-mode-hook Man-mode-hook)
            #'hide-mode-line-mode)
 
-;; Better fontification of number literals in code
+;; Many major modes do no highlighting of number literals, so we do it for them
 (use-package! highlight-numbers
   :hook ((prog-mode conf-mode) . highlight-numbers-mode)
   :config (setq highlight-numbers-generic-regexp "\\_<[[:digit:]]+\\(?:\\.[0-9]*\\)?\\_>"))
@@ -485,87 +518,18 @@ treat Emacs as a non-application window."
 ;;
 ;;; Line numbers
 
+;; Explicitly define a width to reduce computation
 (setq-default display-line-numbers-width 3)
 
-;; line numbers in most modes
+;; Show absolute line numbers for narrowed regions makes it easier to tell the
+;; buffer is narrowed, and where you are, exactly.
+(setq-default display-line-numbers-widen t)
+
+;; Enable line numbers in most text-editing modes. We avoid
+;; `global-display-line-numbers-mode' because there are many special and
+;; temporary modes where we don't need/want them.
 (add-hook! '(prog-mode-hook text-mode-hook conf-mode-hook)
            #'display-line-numbers-mode)
-
-(defun doom-enable-line-numbers-h ()  (display-line-numbers-mode +1))
-(defun doom-disable-line-numbers-h () (display-line-numbers-mode -1))
-
-;; DEPRECATED `nlinum' is used for Emacs 25 users; 26+ has native line numbers.
-(use-package! nlinum
-  ;; Line number column. A faster (or equivalent, in the worst case) line number
-  ;; plugin than `linum-mode'.
-  :unless EMACS26+
-  :defer t
-  :init
-  (defvar doom-line-number-lpad 4
-    "How much padding to place before line numbers.")
-  (defvar doom-line-number-rpad 1
-    "How much padding to place after line numbers.")
-  (defvar doom-line-number-pad-char 32
-    "Character to use for padding line numbers.
-
-By default, this is a space character. If you use `whitespace-mode' with
-`space-mark', the whitespace in line numbers will be affected (this can look
-ugly). In this case, you can change this to ?\u2002, which is a unicode
-character that looks like a space that `whitespace-mode' won't affect.")
-  :config
-  (setq nlinum-highlight-current-line t)
-
-  ;; Fix lingering hl-line overlays (caused by nlinum)
-  (add-hook! 'hl-line-mode-hook
-    (remove-overlays (point-min) (point-max) 'face 'hl-line))
-
-  (defun doom-nlinum-format-fn (line _width)
-    "A more customizable `nlinum-format-function'. See `doom-line-number-lpad',
-`doom-line-number-rpad' and `doom-line-number-pad-char'. Allows a fix for
-`whitespace-mode' space-marks appearing inside the line number."
-    (let ((str (number-to-string line)))
-      (setq str (concat (make-string (max 0 (- doom-line-number-lpad (length str)))
-                                     doom-line-number-pad-char)
-                        str
-                        (make-string doom-line-number-rpad doom-line-number-pad-char)))
-      (put-text-property 0 (length str) 'face
-                         (if (and nlinum-highlight-current-line
-                                  (= line nlinum--current-line))
-                             'nlinum-current-line
-                           'linum)
-                         str)
-      str))
-  (setq nlinum-format-function #'doom-nlinum-format-fn)
-
-  (add-hook! 'nlinum-mode-hook
-    (defun doom-init-nlinum-width-h ()
-      "Calculate line number column width beforehand (optimization)."
-      (setq nlinum--width
-            (length (save-excursion (goto-char (point-max))
-                                    (format-mode-line "%l")))))))
-
-(use-package! nlinum-hl
-  ;; Fixes disappearing line numbers in nlinum and other quirks
-  :unless EMACS26+
-  :after nlinum
-  :config
-  ;; With `markdown-fontify-code-blocks-natively' enabled in `markdown-mode',
-  ;; line numbers tend to vanish next to code blocks.
-  (advice-add #'markdown-fontify-code-block-natively
-              :after #'nlinum-hl-do-markdown-fontify-region)
-  ;; When using `web-mode's code-folding an entire range of line numbers will
-  ;; vanish in the affected area.
-  (advice-add #'web-mode-fold-or-unfold :after #'nlinum-hl-do-generic-flush)
-  ;; Changing fonts can leave nlinum line numbers in their original size; this
-  ;; forces them to resize.
-  (add-hook 'after-setting-font-hook #'nlinum-hl-flush-all-windows))
-
-(use-package! nlinum-relative
-  :unless EMACS26+
-  :defer t
-  :config
-  (setq nlinum-format " %d ")
-  (add-hook 'evil-mode-hook #'nlinum-relative-setup-evil))
 
 
 ;;
@@ -579,25 +543,33 @@ character that looks like a space that `whitespace-mode' won't affect.")
 behavior). Do not set this directly, this is let-bound in `doom-init-theme-h'.")
 
 (defun doom-init-fonts-h ()
-  "Loads fonts.
+  "Loads `doom-font'."
+  (cond
+   (doom-font
+    (cl-pushnew
+     ;; Avoiding `set-frame-font' because it does a lot of extra, expensive
+     ;; work we can avoid by setting the font frame parameter instead.
+     (cons 'font
+           (cond ((stringp doom-font) doom-font)
+                 ((fontp doom-font) (font-xlfd-name doom-font))
+                 ((signal 'wrong-type-argument (list '(fontp stringp)
+                                                     doom-font)))))
+     default-frame-alist
+     :key #'car :test #'eq))
+   ((display-graphic-p)
+    ;; We try our best to record your system font, so `doom-big-font-mode'
+    ;; can still use it to compute a larger font size with.
+    (setq font-use-system-font t
+          doom-font (face-attribute 'default :font)))))
 
-Fonts are specified by `doom-font', `doom-variable-pitch-font',
-`doom-serif-font' and `doom-unicode-font'."
+(defun doom-init-extra-fonts-h (&optional frame)
+  "Loads `doom-variable-pitch-font',`doom-serif-font' and `doom-unicode-font'."
   (condition-case e
-      (progn
-        (cond (doom-font
-               (add-to-list
-                'default-frame-alist
-                (cons 'font
-                      (cond ((stringp doom-font) doom-font)
-                            ((fontp doom-font) (font-xlfd-name doom-font))
-                            ((signal 'wrong-type-argument (list '(fontp stringp) doom-font)))))))
-              ((display-graphic-p)
-               (setq doom-font (face-attribute 'default :font))))
+      (with-selected-frame (or frame (selected-frame))
         (when doom-serif-font
-          (set-face-attribute 'fixed-pitch-serif t :font doom-serif-font))
+          (set-face-attribute 'fixed-pitch-serif nil :font doom-serif-font))
         (when doom-variable-pitch-font
-          (set-face-attribute 'variable-pitch t :font doom-variable-pitch-font))
+          (set-face-attribute 'variable-pitch nil :font doom-variable-pitch-font))
         (when (and doom-unicode-font (fboundp 'set-fontset-font))
           (set-fontset-font t 'unicode doom-unicode-font nil 'prepend)))
     ((debug error)
@@ -618,7 +590,8 @@ Fonts are specified by `doom-font', `doom-variable-pitch-font',
   "Set up `doom-load-theme-hook' to run after `load-theme' is called."
   :after-while #'load-theme
   (unless no-enable
-    (setq doom-theme theme)
+    (setq doom-theme theme
+          doom-init-theme-p t)
     (run-hooks 'doom-load-theme-hook)))
 
 (defadvice! doom--prefer-compiled-theme-a (orig-fn &rest args)
@@ -642,7 +615,7 @@ startup (or theme switch) time, so long as `doom--prefer-theme-elc' is non-nil."
   "Initialize Doom's user interface by applying all its advice and hooks."
   (run-hook-wrapped 'doom-init-ui-hook #'doom-try-run-hook)
 
-  (add-to-list 'kill-buffer-query-functions #'doom-protect-fallback-buffer-h nil 'eq)
+  (add-hook 'kill-buffer-query-functions #'doom-protect-fallback-buffer-h)
   (add-hook 'after-change-major-mode-hook #'doom-highlight-non-default-indentation-h 'append)
 
   ;; Initialize custom switch-{buffer,window,frame} hooks:
@@ -656,10 +629,15 @@ startup (or theme switch) time, so long as `doom--prefer-theme-elc' is non-nil."
   (dolist (fn '(switch-to-buffer display-buffer))
     (advice-add fn :around #'doom-run-switch-buffer-hooks-a)))
 
-;; Apply `doom-theme'
-(add-hook 'doom-init-ui-hook #'doom-init-theme-h)
 ;; Apply `doom-font' et co
 (add-hook 'doom-after-init-modules-hook #'doom-init-fonts-h)
+(add-hook 'doom-load-theme-hook #'doom-init-extra-fonts-h)
+
+;; Apply `doom-theme'
+(add-hook (if (daemonp)
+              'after-make-frame-functions
+            'doom-init-ui-hook)
+          #'doom-init-theme-h)
 
 (add-hook 'window-setup-hook #'doom-init-ui-h)
 
@@ -667,9 +645,23 @@ startup (or theme switch) time, so long as `doom--prefer-theme-elc' is non-nil."
 ;;
 ;;; Fixes/hacks
 
-;; doesn't exist in terminal Emacs; we define it to prevent errors
+;; Doom doesn't support `customize' and it never will. It's a clumsy interface
+;; that sets variables at a time where it can be easily and unpredictably
+;; overwritten. Configure things from your $DOOMDIR instead.
+(dolist (sym '(customize-option customize-browse customize-group customize-face
+               customize-rogue customize-saved customize-apropos
+               customize-changed customize-unsaved customize-variable
+               customize-set-value customize-customized customize-set-variable
+               customize-apropos-faces customize-save-variable
+               customize-apropos-groups customize-apropos-options
+               customize-changed-options customize-save-customized))
+  (put sym 'disabled "Doom doesn't support `customize', configure Emacs from $DOOMDIR/config.el instead"))
+(put 'customize-themes 'disabled "Set `doom-theme' or use `load-theme' in $DOOMDIR/config.el instead")
+
+;; Doesn't exist in terminal Emacs, so we define it to prevent void-function
+;; errors emitted from packages use it without checking for it first.
 (unless (fboundp 'define-fringe-bitmap)
-  (defun define-fringe-bitmap (&rest _)))
+  (fset 'define-fringe-bitmap #'ignore))
 
 (after! whitespace
   (defun doom-disable-whitespace-mode-in-childframes-a (orig-fn)

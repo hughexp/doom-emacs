@@ -33,7 +33,8 @@ This is used by `file-exists-p!' and `project-file-exists-p!'."
       (let ((filevar (make-symbol "file")))
         `(let* ((file-name-handler-alist nil)
                 (,filevar ,spec))
-           (and ,(if directory
+           (and (stringp ,filevar)
+                ,(if directory
                      `(let ((default-directory ,directory))
                         (,exists-fn ,filevar))
                    (list exists-fn filevar))
@@ -107,26 +108,26 @@ be relative to it.
 The search recurses up to DEPTH and no further. DEPTH is an integer.
 
 MATCH is a string regexp. Only entries that match it will be included."
-  (let (file-name-handler-alist
-        result)
+  (let (result file-name-handler-alist)
     (dolist (file (mapcan (doom-rpartial #'doom-glob "*") (doom-enlist paths)))
       (cond ((file-directory-p file)
-             (nconcq! result
-                      (and (memq type '(t dirs))
-                           (string-match-p match file)
-                           (not (and filter (funcall filter file)))
-                           (not (and (file-symlink-p file)
-                                     (not follow-symlinks)))
-                           (<= mindepth 0)
-                           (list (cond (map (funcall map file))
-                                       (relative-to (file-relative-name file relative-to))
-                                       (file))))
-                      (and (>= depth 1)
-                           (apply #'doom-files-in file
-                                  (append (list :mindepth (1- mindepth)
-                                                :depth (1- depth)
-                                                :relative-to relative-to)
-                                          rest)))))
+             (appendq!
+              result
+              (and (memq type '(t dirs))
+                   (string-match-p match file)
+                   (not (and filter (funcall filter file)))
+                   (not (and (file-symlink-p file)
+                             (not follow-symlinks)))
+                   (<= mindepth 0)
+                   (list (cond (map (funcall map file))
+                               (relative-to (file-relative-name file relative-to))
+                               (file))))
+              (and (>= depth 1)
+                   (apply #'doom-files-in file
+                          (append (list :mindepth (1- mindepth)
+                                        :depth (1- depth)
+                                        :relative-to relative-to)
+                                  rest)))))
             ((and (memq type '(t files))
                   (string-match-p match file)
                   (not (and filter (funcall filter file)))
@@ -136,6 +137,24 @@ MATCH is a string regexp. Only entries that match it will be included."
                      file)
                    result))))
     result))
+
+;;;###autoload
+(defun doom-file-cookie-p (file &optional cookie null-value)
+  "Returns the evaluated result of FORM in a ;;;###COOKIE FORM at the top of
+FILE.
+
+If COOKIE doesn't exist, return NULL-VALUE."
+  (unless (file-exists-p file)
+    (signal 'file-missing file))
+  (unless (file-readable-p file)
+    (error "%S is unreadable" file))
+  (with-temp-buffer
+    (insert-file-contents file nil 0 256)
+    (if (re-search-forward (format "^;;;###%s " (regexp-quote (or cookie "if")))
+                           nil t)
+        (let ((load-file-name file))
+          (eval (sexp-at-point) t))
+      null-value)))
 
 ;;;###autoload
 (defmacro file-exists-p! (files &optional directory)
@@ -148,20 +167,50 @@ single file or nested compound statement of `and' and `or' statements."
   `(let ((p ,(doom--resolve-path-forms files directory)))
      (and p (expand-file-name p ,directory))))
 
+;;;###autoload
+(defun doom-file-size (file &optional dir)
+  "Returns the size of FILE (in DIR) in bytes."
+  (let ((file (expand-file-name file dir)))
+    (unless (file-exists-p file)
+      (error "Couldn't find file %S" file))
+    (unless (file-readable-p file)
+      (error "File %S is unreadable; can't acquire its filesize"
+             file))
+    (nth 7 (file-attributes file))))
+
+(defvar w32-get-true-file-attributes)
+;;;###autoload
+(defun doom-directory-size (dir)
+  "Returns the size of FILE (in DIR) in kilobytes."
+  (unless (file-directory-p dir)
+    (error "Directory %S does not exist" dir))
+  (if (executable-find "du")
+      (/ (string-to-number (cdr (doom-call-process "du" "-sb" dir)))
+         1024.0)
+    ;; REVIEW This is slow and terribly inaccurate, but it's something
+    (let ((w32-get-true-file-attributes t)
+          (file-name-handler-alist dir)
+          (max-lisp-eval-depth 5000)
+          (sum 0.0))
+      (dolist (attrs (directory-files-and-attributes dir nil nil t) sum)
+        (unless (member (car attrs) '("." ".."))
+          (cl-incf
+           sum (if (eq (nth 1 attrs) t) ; is directory
+                   (doom-directory-size (expand-file-name (car attrs) dir))
+                 (/ (nth 8 attrs) 1024.0))))))))
+
 
 ;;
 ;;; Helpers
 
-(defun doom--forget-file (old-path &optional new-path)
+(defun doom--forget-file (path)
   "Ensure `recentf', `projectile' and `save-place' forget OLD-PATH."
   (when (bound-and-true-p recentf-mode)
-    (when new-path
-      (recentf-add-file new-path))
-    (recentf-remove-if-non-kept old-path))
+    (recentf-remove-if-non-kept path))
   (when (and (bound-and-true-p projectile-mode)
              (doom-project-p)
-             (projectile-file-cached-p old-path (doom-project-root)))
-    (projectile-purge-file-from-cache old-path))
+             (projectile-file-cached-p path (doom-project-root)))
+    (projectile-purge-file-from-cache path))
   (when (bound-and-true-p save-place-mode)
     (save-place-forget-unreadable-files)))
 
@@ -170,7 +219,8 @@ single file or nested compound statement of `and' and `or' statements."
     (vc-file-clearprops path)
     (vc-resynch-buffer path nil t))
   (when (featurep 'magit)
-    (magit-refresh)))
+    (when-let (default-directory (magit-toplevel (file-name-directory path)))
+      (magit-refresh))))
 
 (defun doom--copy-file (old-path new-path &optional force-p)
   (let* ((new-path (expand-file-name new-path))
@@ -256,29 +306,61 @@ file if it exists, without confirmation."
            (let ((old-path (buffer-file-name))
                  (new-path (expand-file-name new-path)))
              (when-let (dest (doom--copy-file old-path new-path force-p))
+               (doom--forget-file old-path)
                (when (file-exists-p old-path)
                  (delete-file old-path))
+               (mapc #'doom--update-file
+                     (delq
+                      nil (list (if (ignore-errors
+                                      (file-equal-p (doom-project-root old-path)
+                                                    (doom-project-root new-path)))
+                                    nil
+                                  old-path)
+                                new-path)))
                (kill-current-buffer)
-               (doom--forget-file old-path new-path)
-               (doom--update-file new-path)
                (find-file new-path)
                (message "File successfully moved to %s" dest))))
     (`overwrite-self (error "Cannot overwrite self"))
     (`aborted (message "Aborted"))
     (_ t)))
 
+(defun doom--sudo-file (file)
+  (let ((host (or (file-remote-p file 'host) "localhost")))
+    (concat "/" (when (file-remote-p file)
+                  (concat (file-remote-p file 'method) ":"
+                          (if-let (user (file-remote-p file 'user))
+                              (concat user "@" host)
+                            host)
+                          "|"))
+            "sudo:root@" host
+            ":" (or (file-remote-p file 'localname)
+                    file))))
+
 ;;;###autoload
 (defun doom/sudo-find-file (file)
   "Open FILE as root."
   (interactive "FOpen file as root: ")
-  (when (file-writable-p file)
-    (user-error "File is user writeable, aborting sudo"))
-  (find-file (if (file-remote-p file)
-                 (concat "/" (file-remote-p file 'method) ":" (file-remote-p file 'user) "@" (file-remote-p file 'host)  "|sudo:root@" (file-remote-p file 'host) ":" (file-remote-p file 'localname))
-               (concat "/sudo:root@localhost:" file))))
+  (find-file (doom--sudo-file file)))
 
 ;;;###autoload
 (defun doom/sudo-this-file ()
   "Open the current file as root."
   (interactive)
-  (doom/sudo-find-file (file-truename buffer-file-name)))
+  (find-alternate-file (doom--sudo-file (or buffer-file-name
+                                            (when (or (derived-mode-p 'dired-mode)
+                                                      (derived-mode-p 'wdired-mode))
+                                              default-directory)))))
+
+;;;###autoload
+(defun doom/sudo-save-buffer ()
+  "Save this file as root."
+  (interactive)
+  (let ((file (doom--sudo-file buffer-file-name)))
+    (if-let (buffer (find-file-noselect file))
+        (let ((origin (current-buffer)))
+          (unwind-protect
+              (with-current-buffer buffer
+                (save-buffer))
+            (unless (eq origin buffer)
+              (kill-buffer buffer))))
+      (user-error "Unable to open %S" file))))

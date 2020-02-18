@@ -17,6 +17,9 @@ If the depth is 1, the first directory in src/java/net/lissner/game/MyClass.java
   is removed: java.net.lissner.game.
 If the depth is 2, the first two directories are removed: net.lissner.game.")
 
+(after! projectile
+  (pushnew! projectile-project-root-files "gradlew" "build.gradle"))
+
 
 ;;
 ;; java-mode
@@ -43,4 +46,3 @@ If the depth is 2, the first two directories are removed: net.lissner.game.")
   :mode "\\.g\\(?:radle\\|roovy\\)$"
   :config
   (set-eval-handler! 'groovy-mode "groovy"))
-

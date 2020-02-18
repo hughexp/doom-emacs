@@ -12,13 +12,14 @@
   :config
   (setq nxml-slash-auto-complete-flag t
         nxml-auto-insert-xml-declaration-flag t)
-  (set-company-backend! 'nxml-mode '(company-nxml company-yasnippet)))
+  (set-company-backend! 'nxml-mode '(company-nxml company-yasnippet))
+  (setq-hook! 'nxml-mode-hook tab-width nxml-child-indent))
 
 
 ;;
 ;;; Third-party plugins
 
-;; `csv-mode'
+;;;###package csv-mode
 (map! :after csv-mode
       :localleader
       :map csv-mode-map
@@ -30,20 +31,23 @@
       "t" #'csv-transpose)
 
 (use-package! graphql-mode
-  :mode "\\.gql\\'")
+  :mode "\\.gql\\'"
+  :config (setq-hook! 'graphql-mode-hook tab-width graphql-indent-level))
 
 (use-package! json-mode
   :mode "\\.js\\(?:on\\|[hl]int\\(?:rc\\)?\\)\\'"
   :config
   (set-electric! 'json-mode :chars '(?\n ?: ?{ ?})))
 
-(use-package! jsonnet-mode
-  :defer t
-  :config
+(after! jsonnet-mode
   (set-electric! 'jsonnet-mode :chars '(?\n ?: ?{ ?})))
 
+(after! yaml-mode
+  (setq-hook! 'yaml-mode-hook tab-width yaml-indent-offset))
+
+
 ;;
-;; Frameworks
+;;; Frameworks
 
 (def-project-mode! +data-vagrant-mode
   :files ("Vagrantfile"))

@@ -79,7 +79,7 @@
   (add-to-list 'magic-mode-alist '(+javascript-jsx-file-p . rjsx-mode))
   :config
   (set-electric! 'rjsx-mode :chars '(?\} ?\) ?. ?>))
-  (when (featurep! :tools flycheck)
+  (when (featurep! :checkers syntax)
     (add-hook! 'rjsx-mode-hook
       ;; jshint doesn't know how to deal with jsx
       (push 'javascript-jshint flycheck-disabled-checkers)))
@@ -94,7 +94,16 @@
     (if (= n 1) (rjsx-maybe-reparse))))
 
 
-(after! typescript-mode
+(use-package! typescript-mode
+  :defer t
+  :init
+  ;; REVIEW Fix #2252. This is overwritten if the :lang web module is enabled.
+  ;;        We associate TSX files with `web-mode' by default instead because
+  ;;        `typescript-mode' does not officially support JSX/TSX. See
+  ;;        https://github.com/emacs-typescript/typescript.el/issues/4
+  (unless (featurep! :lang web)
+    (add-to-list 'auto-mode-alist '("\\.tsx\\'" . typescript-mode)))
+  :config
   (add-hook 'typescript-mode-hook #'rainbow-delimiters-mode)
   (setq-hook! 'typescript-mode-hook
     comment-line-break-function #'js2-line-break)
@@ -145,9 +154,7 @@ to tide."
             ;; necessary because `tide-setup' and `lsp' will error if not a
             ;; file-visiting buffer
             (add-hook 'after-save-hook #'+javascript-init-tide-or-lsp-maybe-h nil 'local)
-          (or (and (featurep! +lsp)
-                   (lsp!)
-                   (bound-and-true-p lsp-mode))
+          (or (and (featurep! +lsp) (lsp!))
               ;; fall back to tide
               (if (executable-find "node")
                   (and (require 'tide nil t)
@@ -190,7 +197,7 @@ to tide."
         :map tide-mode-map
         "R"   #'tide-restart-server
         "f"   #'tide-format
-        "rs"  #'tide-rename-symbol
+        "rrs" #'tide-rename-symbol
         "roi" #'tide-organize-imports))
 
 
@@ -207,7 +214,26 @@ to tide."
   :config
   (when (featurep! :editor evil +everywhere)
     (let ((js2-refactor-mode-map (evil-get-auxiliary-keymap js2-refactor-mode-map 'normal t t)))
-      (js2r-add-keybindings-with-prefix (format "%s r" doom-localleader-key)))))
+      (js2r-add-keybindings-with-prefix (format "%s r" doom-localleader-key))))
+  (map! :after js2-mode
+        :map js2-mode-map
+        :localleader
+        (:prefix ("r" . "refactor")
+          (:prefix ("a" . "add/arguments"))
+          (:prefix ("b" . "barf"))
+          (:prefix ("c" . "contract"))
+          (:prefix ("d" . "debug"))
+          (:prefix ("e" . "expand/extract"))
+          (:prefix ("i" . "inject/inline/introduce"))
+          (:prefix ("l" . "localize/log"))
+          (:prefix ("o" . "organize"))
+          (:prefix ("r" . "rename"))
+          (:prefix ("s" . "slurp/split/string"))
+          (:prefix ("t" . "toggle"))
+          (:prefix ("u" . "unwrap"))
+          (:prefix ("v" . "var"))
+          (:prefix ("w" . "wrap"))
+          (:prefix ("3" . "ternary")))))
 
 
 (use-package! eslintd-fix
@@ -219,6 +245,9 @@ to tide."
 
 ;;;###package skewer-mode
 (map! :localleader
+      (:after js2-mode
+        :map js2-mode-map
+        :prefix ("s" . "skewer"))
       :prefix "s"
       (:after skewer-mode
         :map skewer-mode-map
@@ -239,19 +268,29 @@ to tide."
 
 
 ;;;###package npm-mode
-(use-package npm-mode
+(use-package! npm-mode
   :hook ((js-mode typescript-mode) . npm-mode)
   :config
-  (map! :localleader
-        :map npm-mode-keymap
-        "n" npm-mode-command-keymap))
+  (map! (:localleader
+          :map npm-mode-keymap
+          "n" npm-mode-command-keymap)
+        (:after js2-mode
+          :map js2-mode-map
+          :localleader
+          (:prefix ("n" . "npm")))))
 
 
 ;;
 ;;; Projects
 
 (def-project-mode! +javascript-npm-mode
-  :modes '(html-mode css-mode web-mode markdown-mode js-mode typescript-mode)
+  :modes '(html-mode
+           css-mode
+           web-mode
+           markdown-mode
+           js-mode
+           typescript-mode
+           solidity-mode)
   :when (locate-dominating-file default-directory "package.json")
   :add-hooks '(+javascript-add-node-modules-path-h npm-mode))
 

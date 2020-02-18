@@ -7,32 +7,20 @@
 (defun +emacs-lisp-eval (beg end)
   "Evaluate a region and print it to the echo area (if one line long), otherwise
 to a pop up buffer."
-  (require 'pp)
-  (let ((result
-         (let ((debug-on-error t)
-               (doom--current-module (ignore-errors (doom-module-from-path buffer-file-name))))
-           (eval (read
-                  (concat "(progn "
-                          (buffer-substring-no-properties beg end)
-                          "\n)"))
-                 t)))
-        (buf (get-buffer-create "*doom eval*"))
-        (inhibit-read-only t))
-    (with-current-buffer buf
-      (read-only-mode +1)
-      (erase-buffer)
-      (setq-local scroll-margin 0)
-      (let (emacs-lisp-mode-hook)
-        (emacs-lisp-mode))
-      (pp result buf)
-      (let ((lines (count-lines (point-min) (point-max))))
-        (if (> lines 1)
-            (save-selected-window
-              (pop-to-buffer buf)
-              (with-current-buffer buf
-                (goto-char (point-min))))
-          (message "%s" (buffer-substring (point-min) (point-max)))
-          (kill-buffer buf))))))
+  (+eval-display-results
+   (string-trim-right
+    (condition-case-unless-debug e
+        (let ((result
+               (let ((debug-on-error t))
+                 (eval (read (format "(progn %s)" (buffer-substring-no-properties beg end)))
+                       `((buffer-file-name . ,(buffer-file-name (buffer-base-buffer)))
+                         (doom--current-module
+                          . ,(ignore-errors
+                               (doom-module-from-path buffer-file-name))))))))
+          (require 'pp)
+          (replace-regexp-in-string "\\\\n" "\n" (pp-to-string result)))
+      (error (error-message-string e))))
+   (current-buffer)))
 
 (defvar +emacs-lisp--face nil)
 ;;;###autoload
@@ -78,13 +66,71 @@ library/userland functions"
   (with-no-warnings
     (byte-compile #'+emacs-lisp-highlight-vars-and-faces)))
 
+
+(defun +emacs-lisp--module-at-point ()
+  (let ((origin (point)))
+    (save-excursion
+      (goto-char (point-min))
+      (when (re-search-forward "(doom! " nil 'noerror)
+        (goto-char (match-beginning 0))
+        (cl-destructuring-bind (beg . end)
+            (bounds-of-thing-at-point 'sexp)
+          (when (and (>= origin beg)
+                     (<= origin end))
+            (goto-char origin)
+            (while (not (sexp-at-point))
+              (forward-symbol -1))
+            (let (category module flag)
+              (cond ((keywordp (setq category (sexp-at-point)))
+                     (while (keywordp (sexp-at-point))
+                       (forward-sexp 1))
+                     (setq module (car (doom-enlist (sexp-at-point)))))
+                    ((and (symbolp (setq module (sexp-at-point)))
+                          (string-prefix-p "+" (symbol-name module)))
+                     (while (symbolp (sexp-at-point))
+                       (thing-at-point--beginning-of-sexp))
+                     (setq flag module
+                           module (car (sexp-at-point)))
+                     (when (re-search-backward "\\_<:\\w+\\_>" nil t)
+                       (setq category (sexp-at-point))))
+                    ((symbolp module)
+                     (when (re-search-backward "\\_<:\\w+\\_>" nil t)
+                       (setq category (sexp-at-point)))))
+              (list category module flag))))))))
+
+;;;###autoload
+(defun +emacs-lisp-lookup-definition (_thing)
+  "Lookup definition of THING."
+  (if-let (module (+emacs-lisp--module-at-point))
+      (doom/help-modules (car module) (cadr module) 'visit-dir)
+    (call-interactively #'elisp-def)))
+
 ;;;###autoload
 (defun +emacs-lisp-lookup-documentation (thing)
   "Lookup THING with `helpful-variable' if it's a variable, `helpful-callable'
 if it's callable, `apropos' otherwise."
-  (if thing
-      (doom/describe-symbol thing)
-    (call-interactively #'doom/describe-symbol)))
+  (cond ((when-let (module (+emacs-lisp--module-at-point))
+           (doom/help-modules (car module) (cadr module))
+           (when (eq major-mode 'org-mode)
+             (with-demoted-errors "%s"
+               (re-search-forward
+                (if (caddr module)
+                    "\\* Module Flags$"
+                  "\\* Description$"))
+               (when (caddr module)
+                 (re-search-forward (format "=\\%s=" (caddr module))
+                                    nil t))
+               (when (invisible-p (point))
+                 (org-show-hidden-entry))))
+           'deferred))
+        (thing (helpful-symbol (intern thing)))
+        ((call-interactively #'helpful-at-point))))
+
+;; FIXME
+;; (defun +emacs-lisp-lookup-file (thing)
+;;   (when-let (module (+emacs-lisp--module-at-point thing))
+;;     (doom/help-modules (car module) (cadr module) 'visit-dir)
+;;     t))
 
 
 ;;
@@ -135,7 +181,7 @@ if it's callable, `apropos' otherwise."
         `(("Section" "^[ \t]*;;;;*[ \t]+\\([^\n]+\\)" 1)
           ("Evil commands" "^\\s-*(evil-define-\\(?:command\\|operator\\|motion\\) +\\(\\_<[^ ()\n]+\\_>\\)" 1)
           ("Unit tests" "^\\s-*(\\(?:ert-deftest\\|describe\\) +\"\\([^\")]+\\)\"" 1)
-          ("Package" "^\\s-*(\\(?:;;;###package\\|def-package!\\|package!\\|use-package\\|after!\\) +\\(\\_<[^ ()\n]+\\_>\\)" 1)
+          ("Package" "^\\s-*(\\(?:;;;###package\\|package!\\|use-package!?\\|after!\\) +\\(\\_<[^ ()\n]+\\_>\\)" 1)
           ("Major modes" "^\\s-*(define-derived-mode +\\([^ ()\n]+\\)" 1)
           ("Minor modes" "^\\s-*(define-\\(?:global\\(?:ized\\)?-minor\\|generic\\|minor\\)-mode +\\([^ ()\n]+\\)" 1)
           ("Modelines" "^\\s-*(def-modeline! +\\([^ ()\n]+\\)" 1)
@@ -174,3 +220,15 @@ verbosity when editing a file in `doom-private-dir' or `doom-emacs-dir'."
                  " "
                  (default-value 'flycheck-emacs-lisp-check-form)
                  ")"))))
+
+;;;###autoload
+(defun +emacs-lisp/edebug-instrument-defun-on ()
+  "Toggle on instrumentalisation for the function under `defun'."
+  (interactive)
+  (eval-defun 'edebugit))
+
+;;;###autoload
+(defun +emacs-lisp/edebug-instrument-defun-off ()
+  "Toggle off instrumentalisation for the function under `defun'."
+  (interactive)
+  (eval-defun nil))

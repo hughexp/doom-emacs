@@ -43,7 +43,7 @@
 package's name as a symbol, and whose CDR is the plist supplied to its
 `package!' declaration. Set by `doom-initialize-packages'.")
 
-(defvar doom-core-packages '(straight use-package async)
+(defvar doom-core-packages '(straight use-package)
   "A list of packages that must be installed (and will be auto-installed if
 missing) and shouldn't be deleted.")
 
@@ -72,10 +72,9 @@ missing) and shouldn't be deleted.")
 
 ;; Ensure that, if we do need package.el, it is configured correctly. You really
 ;; shouldn't be using it, but it may be convenient for quick package testing.
-(setq package--init-file-ensured t
-      package-enable-at-startup nil
-      package-user-dir doom-elpa-dir
-      package-gnupghome-dir (expand-file-name "gpg" doom-elpa-dir)
+(setq package-enable-at-startup nil
+      package-user-dir (concat doom-local-dir "elpa/")
+      package-gnupghome-dir (expand-file-name "gpg" package-user-dir)
       ;; I omit Marmalade because its packages are manually submitted rather
       ;; than pulled, so packages are often out of date with upstream.
       package-archives
@@ -84,10 +83,15 @@ missing) and shouldn't be deleted.")
           ("melpa" . ,(concat proto "://melpa.org/packages/"))
           ("org"   . ,(concat proto "://orgmode.org/elpa/")))))
 
+(advice-add #'package--ensure-init-file :override #'ignore)
+
 ;; Don't save `package-selected-packages' to `custom-file'
 (defadvice! doom--package-inhibit-custom-file-a (&optional value)
   :override #'package--save-selected-packages
   (if value (setq package-selected-packages value)))
+
+;; Refresh package.el the first time you call `package-install'
+(add-transient-hook! 'package-install (package-refresh-contents))
 
 ;;; straight
 (setq straight-base-dir doom-local-dir
@@ -106,15 +110,17 @@ missing) and shouldn't be deleted.")
       ;; certain things to work (like magit and org), but we can deal with that
       ;; when we cross that bridge.
       straight-vc-git-default-clone-depth 1
-      ;; Straight's own emacsmirror mirror is a little smaller and faster.
-      straight-recipes-emacsmirror-use-mirror t
       ;; Prefix declarations are unneeded bulk added to our autoloads file. Best
       ;; we just don't have to deal with them at all.
-      autoload-compute-prefixes nil)
+      autoload-compute-prefixes nil
+      ;; We handle it ourselves
+      straight-fix-org nil)
 
-(defun doom--finalize-straight ()
-  (mapc #'funcall (delq nil (mapcar #'cdr straight--transaction-alist)))
-  (setq straight--transaction-alist nil))
+(defadvice! doom--read-pinned-packages-a (orig-fn &rest args)
+  "Read from `doom-pinned-packages' on top of straight's lockfiles."
+  :around #'straight--lockfile-read-all
+  (append (apply orig-fn args)
+          (doom-package-pinned-list)))
 
 
 ;;
@@ -129,7 +135,7 @@ This ensure `doom-packages' is populated, if isn't aren't already. Use this
 before any of straight's or Doom's package management's API to ensure all the
 necessary package metadata is initialized and available for them."
   (unless doom-init-packages-p
-     (setq force-p t))
+    (setq force-p t))
   (when (or force-p (not (bound-and-true-p package--initialized)))
     (doom-log "Initializing package.el")
     (require 'package)
@@ -137,63 +143,69 @@ necessary package metadata is initialized and available for them."
   (when (or force-p (not doom-packages))
     (doom-log "Initializing straight")
     (setq doom-init-packages-p t)
-    (unless (fboundp 'straight--reset-caches)
-      (doom-ensure-straight)
-      (require 'straight))
-    (straight--reset-caches)
-    (mapc #'straight-use-recipes doom-core-package-sources)
-    (straight-register-package
-     `(straight :type git :host github
-                :repo ,(format "%s/straight.el" straight-repository-user)
-                :files ("straight*.el")
-                :branch ,straight-repository-branch
-                :no-byte-compile t))
+    (doom-ensure-straight)
     (mapc #'straight-use-package doom-core-packages)
-    (when noninteractive
-      (add-hook 'kill-emacs-hook #'doom--finalize-straight)))
     (doom-log "Initializing doom-packages")
     (setq doom-disabled-packages nil
+          doom-pinned-packages nil
           doom-packages (doom-package-list))
-    (cl-loop for (pkg . plist) in doom-packages
-             for ignored = (eval (plist-get plist :ignore) t)
-             for disabled = (eval (plist-get plist :disable) t)
-             if disabled
-             do (cl-pushnew pkg doom-disabled-packages)
-             else if (not ignored)
-             do (with-demoted-errors "Package error: %s"
-                  (straight-register-package
-                   (if-let (recipe (plist-get plist :recipe))
-                       (let ((plist (straight-recipes-retrieve pkg)))
-                         `(,pkg ,@(doom-plist-merge recipe (cdr plist))))
-                     pkg)))))
+    (dolist (package doom-packages)
+      (let ((name (car package)))
+        (with-plist! (cdr package) (recipe modules disable ignore pin)
+          (if ignore
+              (doom-log "Ignoring package %S" name)
+            (if (not disable)
+                (with-demoted-errors "Package error: %s"
+                  (when recipe
+                    (straight-override-recipe (cons name recipe)))
+                  (straight-register-package name))
+              (doom-log "Disabling package %S" name)
+              (cl-pushnew name doom-disabled-packages)
+              ;; Warn about disabled core packages
+              (when (cl-find :core modules :key #'car)
+                (print! (warn "%s\n%s")
+                        (format "You've disabled %S" name)
+                        (indent 2 (concat "This is a core package. Disabling it will cause errors, as Doom assumes\n"
+                                          "core packages are always available. Disable their minor-modes or hooks instead.")))))))))))
 
 (defun doom-ensure-straight ()
   "Ensure `straight' is installed and was compiled with this version of Emacs."
-  (defvar bootstrap-version)
-  (let* (;; Force straight to install into ~/.emacs.d/.local/straight instead of
-         ;; ~/.emacs.d/straight by pretending `doom-local-dir' is our .emacs.d.
-         (user-emacs-directory straight-base-dir)
-         (bootstrap-file (doom-path straight-base-dir "straight/repos/straight.el/straight.el"))
-         (bootstrap-version 5))
-    (make-directory (doom-path straight-base-dir "straight/build") 'parents)
-    (unless (featurep 'straight)
-      (unless (or (require 'straight nil t)
-                  (file-readable-p bootstrap-file))
-        (with-current-buffer
-            (url-retrieve-synchronously
-             (format "https://raw.githubusercontent.com/raxod502/straight.el/%s/install.el"
-                     straight-repository-branch)
-             'silent 'inhibit-cookies)
-          (goto-char (point-max))
-          (eval-print-last-sexp)))
-      (load bootstrap-file nil t))))
+  (unless (fboundp 'straight--reset-caches)
+    (defvar bootstrap-version)
+    (let* (;; Force straight to install into ~/.emacs.d/.local/straight instead of
+           ;; ~/.emacs.d/straight by pretending `doom-local-dir' is our .emacs.d.
+           (user-emacs-directory straight-base-dir)
+           (bootstrap-file (doom-path straight-base-dir "straight/repos/straight.el/straight.el"))
+           (bootstrap-version 5))
+      (make-directory (doom-path straight-base-dir "straight/build") 'parents)
+      (or (require 'straight nil t)
+          (file-readable-p bootstrap-file)
+          (with-current-buffer
+              (url-retrieve-synchronously
+               (format "https://raw.githubusercontent.com/raxod502/straight.el/%s/install.el"
+                       straight-repository-branch)
+               'silent 'inhibit-cookies)
+            (goto-char (point-max))
+            (eval-print-last-sexp)))
+        (load bootstrap-file nil t))
+    (require 'straight))
+  (straight--reset-caches)
+  (setq straight-recipe-repositories nil
+        straight-recipe-overrides nil)
+  (mapc #'straight-use-recipes doom-core-package-sources)
+  (straight-register-package
+   `(straight :type git :host github
+              :repo ,(format "%s/straight.el" straight-repository-user)
+              :files ("straight*.el")
+              :branch ,straight-repository-branch
+              :no-byte-compile t)))
 
 
 ;;
 ;;; Module package macros
 
 (cl-defmacro package!
-    (name &rest plist &key built-in _recipe disable ignore _freeze)
+    (name &rest plist &key built-in recipe ignore _pin _disable)
   "Declares a package and how to install it (if applicable).
 
 This macro is declarative and does not load nor install packages. It is used to
@@ -205,64 +217,70 @@ Only use this macro in a module's packages.el file.
 Accepts the following properties:
 
  :recipe RECIPE
-   Takes a MELPA-style recipe (see `quelpa-recipe' in `quelpa' for an example);
-   for packages to be installed from external sources.
+   Specifies a straight.el recipe to allow you to acquire packages from external
+   sources. See https://github.com/raxod502/straight.el#the-recipe-format for
+   details on this recipe.
  :disable BOOL
-   Do not install or update this package AND disable all of its `def-package!'
-   blocks.
+   Do not install or update this package AND disable all of its `use-package!'
+   and `after!' blocks.
  :ignore FORM
    Do not install this package.
- :freeze FORM
-   Do not update this package if FORM is non-nil.
- :built-in BOOL
-   Same as :ignore if the package is a built-in Emacs package. If set to
-   'prefer, will use built-in package if it is present.
+ :pin STR|nil
+   Pin this package to commit hash STR. Setting this to nil will unpin this
+   package if previously pinned.
+ :built-in BOOL|'prefer
+   Same as :ignore if the package is a built-in Emacs package. This is more to
+   inform help commands like `doom/help-packages' that this is a built-in
+   package. If set to 'prefer, the package will not be installed if it is
+   already provided by Emacs.
 
 Returns t if package is successfully registered, and nil if it was disabled
 elsewhere."
   (declare (indent defun))
-  (let ((old-plist (cdr (assq name doom-packages))))
-    ;; Add current module to :modules
-    (let ((module-list (plist-get old-plist :modules))
-          (module (doom-module-from-path)))
-      (unless (member module module-list)
-        (plist-put! plist :modules
-                    (append module-list
-                            (list module)
-                            nil))))
-
-    ;; Handle :built-in
-    (unless ignore
-      (when built-in
-        (doom-log "Ignoring built-in package %S" name)
-        (when (equal built-in '(quote prefer))
-          (setq built-in `(locate-library ,(symbol-name name) nil doom--initial-load-path))))
-      (plist-put! plist :ignore built-in))
-
-    ;; DEPRECATED Translate :fetcher to :host
-    (with-plist! plist (recipe)
-      (with-plist! recipe (fetcher)
-        (when fetcher
-          (message "%s\n%s"
-                   (format "WARNING: The :fetcher property was used for the %S package."
-                           name)
-                   "This property is deprecated. Replace it with :host.")
-          (plist-put! recipe :host fetcher)
-          (plist-delete! recipe :fetcher))
-        (plist-put! plist :recipe recipe)))
-
-    (doplist! ((prop val) plist)
-      (unless (null val)
-        (plist-put! old-plist prop val)))
-    (setq plist old-plist)
-
-    ;; TODO Add `straight-use-package-pre-build-function' support
-    (macroexp-progn
-     (append `((setf (alist-get ',name doom-packages) ',plist))
-             (when disable
-               `((doom-log "Disabling package %S" ',name)
-                 (add-to-list 'doom-disabled-packages ',name nil 'eq)
-                 nil))))))
+  (when (and recipe (keywordp (car-safe recipe)))
+    (plist-put! plist :recipe `(quote ,recipe)))
+  ;; :built-in t is basically an alias for :ignore (locate-library NAME)
+  (when built-in
+    (when (and (not ignore)
+               (equal built-in '(quote prefer)))
+      (setq built-in `(locate-library ,(symbol-name name) nil doom--initial-load-path)))
+    (plist-delete! plist :built-in)
+    (plist-put! plist :ignore built-in))
+  `(let* ((name ',name)
+          (plist (cdr (assq name doom-packages))))
+     ;; Record what module this declaration was found in
+     (let ((module-list (plist-get plist :modules))
+           (module ',(doom-module-from-path)))
+       (unless (member module module-list)
+         (plist-put! plist :modules
+                     (append module-list
+                             (list module)
+                             nil))))
+     ;; Merge given plist with pre-existing one
+     (doplist! ((prop val) (list ,@plist) plist)
+       (unless (null val)
+         (plist-put! plist prop val)))
+     ;; Some basic key validation; error if you're not using a valid key
+     (condition-case e
+         (when-let (recipe (plist-get plist :recipe))
+           (cl-destructuring-bind
+               (&key local-repo _files _flavor
+                     _no-build _no-byte-compile _no-autoloads
+                     _type _repo _host _branch _remote _nonrecursive _fork _depth)
+               recipe
+             ;; Expand :local-repo from current directory
+             (when local-repo
+               (plist-put! plist :recipe
+                           (plist-put recipe :local-repo
+                                      (expand-file-name local-repo ,(dir!)))))))
+       (error
+        (signal 'doom-package-error
+                (cons ,(symbol-name name)
+                      (error-message-string e)))))
+     ;; This is the only side-effect of this macro!
+     (setf (alist-get name doom-packages) plist)
+     (with-no-warnings
+       (not (plist-get plist :disable)))))
 
 (defmacro disable-packages! (&rest packages)
   "A convenience macro for disabling packages in bulk.
@@ -270,6 +288,44 @@ Only use this macro in a module's (or your private) packages.el file."
   (macroexp-progn
    (cl-loop for p in packages
             collect `(package! ,p :disable t))))
+
+(defmacro unpin! (&rest targets)
+  "Unpin packages in TARGETS.
+
+This unpins packages, so that 'doom upgrade' downloads their latest version. It
+can be used one of five ways:
+
++ To disable pinning wholesale: (unpin! t)
++ To unpin individual packages: (unpin! packageA packageB ...)
++ To unpin all packages in a group of modules: (unpin! :lang :tools ...)
++ To unpin packages in individual modules:
+    (unpin! (:lang python javascript) (:tools docker))
+
+Or any combination of the above.
+
+This macro should only be used from the user's private packages.el. No module
+should use it!"
+  (if (memq t targets)
+      `(mapc (doom-rpartial #'doom-package-set :unpin t)
+             (mapcar #'car doom-packages))
+    (let (forms)
+      (dolist (target targets)
+        (cl-check-type target (or symbol keyword list))
+        (cond
+         ((symbolp target)
+          (push `(doom-package-set ',target :unpin t) forms))
+         ((or (keywordp target)
+              (listp target))
+          (cl-destructuring-bind (category . modules) (doom-enlist target)
+            (dolist (pkg doom-packages)
+              (let ((pkg-modules (plist-get (cdr pkg) :modules)))
+                (and (assq category pkg-modules)
+                     (or (null modules)
+                         (cl-loop for module in modules
+                                  if (member (cons category module) pkg-modules)
+                                  return t))
+                     (push `(doom-package-set ',(car pkg) :unpin t) forms))))))))
+      (macroexp-progn forms))))
 
 (provide 'core-packages)
 ;;; core-packages.el ends here

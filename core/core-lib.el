@@ -1,43 +1,7 @@
 ;;; core-lib.el -*- lexical-binding: t; -*-
 
-(let ((load-path doom--initial-load-path))
-  (require 'subr-x)
-  (require 'cl-lib))
-
-;; Polyfills
-(unless EMACS26+
-  (with-no-warnings
-    ;; `kill-current-buffer' was introduced in Emacs 26
-    (defalias 'kill-current-buffer #'kill-this-buffer)
-    ;; if-let and when-let were moved to (if|when)-let* in Emacs 26+ so we alias
-    ;; them for 25 users.
-    (defalias 'if-let* #'if-let)
-    (defalias 'when-let* #'when-let)
-
-    ;; `mapcan' was introduced in 26.1. `cl-mapcan' isn't a perfect replacement,
-    ;; but it's close enough.
-    (defalias 'mapcan #'cl-mapcan)
-
-    (defun alist-get (key alist &optional default remove testfn)
-      "Return the value associated with KEY in ALIST.
-If KEY is not found in ALIST, return DEFAULT.
-Use TESTFN to lookup in the alist if non-nil.  Otherwise, use `assq'.
-
-This is a generalized variable suitable for use with `setf'.
-When using it to set a value, optional argument REMOVE non-nil
-means to remove KEY from ALIST if the new value is `eql' to DEFAULT."
-      (ignore remove) ;;Silence byte-compiler.
-      (let ((x (if (not testfn)
-                   (assq key alist)
-                 ;; In Emacs<26, `assoc' has no testfn arg, so we have to
-                 ;; implement it ourselves
-                 (if testfn
-                     (cl-loop for entry in alist
-                              if (funcall testfn key entry)
-                              return entry)
-                   (assoc key alist)))))
-        (if x (cdr x) default)))))
-
+(require 'cl-lib)
+(require 'subr-x)
 
 ;;
 ;;; Helpers
@@ -129,6 +93,7 @@ Accepts the same arguments as `message'."
 ARGS is a list of the last N arguments to pass to FUN. The result is a new
 function which does the same as FUN, except that the last N arguments are fixed
 at the values with which this function was called."
+  (declare (pure t) (side-effect-free t))
   (lambda (&rest pre-args)
     (apply fn (append pre-args args))))
 
@@ -137,14 +102,18 @@ at the values with which this function was called."
 ;;; Sugars
 
 (defmacro λ! (&rest body)
-  "Expands to (lambda () (interactive) ,@body)."
-  (declare (doc-string 1))
+  "Expands to (lambda () (interactive) ,@body).
+A factory for quickly producing interaction commands, particularly for keybinds
+or aliases."
+  (declare (doc-string 1) (pure t) (side-effect-free t))
   `(lambda () (interactive) ,@body))
 (defalias 'lambda! 'λ!)
 
 (defun λ!! (command &optional arg)
-  "Expands to a command that interactively calls COMMAND with prefix ARG."
-  (declare (doc-string 1))
+  "Expands to a command that interactively calls COMMAND with prefix ARG.
+A factory for quickly producing interactive, prefixed commands for keybinds or
+aliases."
+  (declare (doc-string 1) (pure t) (side-effect-free t))
   (lambda () (interactive)
      (let ((current-prefix-arg arg))
        (call-interactively command))))
@@ -164,8 +133,62 @@ at the values with which this function was called."
   (when-let (path (file!))
     (directory-file-name (file-name-directory path))))
 
+(defmacro after! (package &rest body)
+  "Evaluate BODY after PACKAGE have loaded.
+
+PACKAGE is a symbol or list of them. These are package names, not modes,
+functions or variables. It can be:
+
+- An unquoted package symbol (the name of a package)
+    (after! helm BODY...)
+- An unquoted list of package symbols (i.e. BODY is evaluated once both magit
+  and git-gutter have loaded)
+    (after! (magit git-gutter) BODY...)
+- An unquoted, nested list of compound package lists, using any combination of
+  :or/:any and :and/:all
+    (after! (:or package-a package-b ...)  BODY...)
+    (after! (:and package-a package-b ...) BODY...)
+    (after! (:and package-a (:or package-b package-c) ...) BODY...)
+  Without :or/:any/:and/:all, :and/:all are implied.
+
+This is a wrapper around `eval-after-load' that:
+
+1. Suppresses warnings for disabled packages at compile-time
+2. No-ops for package that are disabled by the user (via `package!')
+3. Supports compound package statements (see below)
+4. Prevents eager expansion pulling in autoloaded macros all at once"
+  (declare (indent defun) (debug t))
+  (if (symbolp package)
+      (unless (memq package (bound-and-true-p doom-disabled-packages))
+        (list (if (or (not (bound-and-true-p byte-compile-current-file))
+                      (require package nil 'noerror))
+                  #'progn
+                #'with-no-warnings)
+              (let ((body (macroexp-progn body)))
+                `(if (featurep ',package)
+                     ,body
+                   ;; We intentionally avoid `with-eval-after-load' to prevent
+                   ;; eager macro expansion from pulling (or failing to pull) in
+                   ;; autoloaded macros/packages.
+                   (eval-after-load ',package ',body)))))
+    (let ((p (car package)))
+      (cond ((not (keywordp p))
+             `(after! (:and ,@package) ,@body))
+            ((memq p '(:or :any))
+             (macroexp-progn
+              (cl-loop for next in (cdr package)
+                       collect `(after! ,next ,@body))))
+            ((memq p '(:and :all))
+             (dolist (next (cdr package))
+               (setq body `((after! ,next ,@body))))
+             (car body))))))
+
 (defmacro setq! (&rest settings)
-  "A stripped-down `customize-set-variable' with the syntax of `setq'."
+  "A stripped-down `customize-set-variable' with the syntax of `setq'.
+
+Use this instead of `setq' when you know a variable has a custom setter (a :set
+property in its `defcustom' declaration). This trigger setters. `setq' does
+not."
   (macroexp-progn
    (cl-loop for (var val) on settings by 'cddr
             collect `(funcall (or (get ',var 'custom-set) #'set)
@@ -175,7 +198,7 @@ at the values with which this function was called."
   "Push VALUES sequentially into PLACE, if they aren't already present.
 This is a variadic `cl-pushnew'."
   (let ((var (make-symbol "result")))
-    `(dolist (,var (list ,@values))
+    `(dolist (,var (list ,@values) (with-no-warnings ,place))
        (cl-pushnew ,var ,place :test #'equal))))
 
 (defmacro prependq! (sym &rest lists)
@@ -185,10 +208,6 @@ This is a variadic `cl-pushnew'."
 (defmacro appendq! (sym &rest lists)
   "Append LISTS to SYM in place."
   `(setq ,sym (append ,sym ,@lists)))
-
-(defmacro nconcq! (sym &rest lists)
-  "Append LISTS to SYM by altering them in place."
-  `(setq ,sym (nconc ,sym ,@lists)))
 
 (defmacro delq! (elt list &optional fetcher)
   "`delq' ELT from LIST in-place.
@@ -200,9 +219,22 @@ If FETCHER is a function, ELT is used as the key in LIST (an alist)."
                   elt)
                ,list)))
 
-(defmacro delete! (elt list)
-  "Delete ELT from LIST in-place."
-  `(setq ,list (delete ,elt ,list)))
+(defmacro letenv! (envvars &rest body)
+  "Lexically bind ENVVARS in BODY, like `let' but for `process-environment'."
+  (declare (indent 1))
+  `(let ((process-environment (copy-sequence process-environment)))
+     (dolist (var (list ,@(cl-loop for (var val) in envvars
+                                   collect `(cons ,var ,val))))
+       (setenv (car var) (cdr var)))
+     ,@body))
+
+(defmacro add-load-path! (&rest dirs)
+  "Add DIRS to `load-path', relative to the current file.
+The current file is the file from which `add-to-load-path!' is used."
+  `(let ((default-directory ,(dir!))
+         file-name-handler-alist)
+     (dolist (dir (list ,@dirs))
+       (cl-pushnew (expand-file-name dir) load-path))))
 
 (defmacro add-transient-hook! (hook-or-function &rest forms)
   "Attaches a self-removing function to HOOK-OR-FUNCTION.
@@ -235,15 +267,16 @@ If N and M = 1, there's no benefit to using this macro over `add-hook'.
 
 This macro accepts, in order:
 
-  1. Optional properties :local and/or :append, which will make the hook
+  1. The mode(s) or hook(s) to add to. This is either an unquoted mode, an
+     unquoted list of modes, a quoted hook variable or a quoted list of hook
+     variables.
+  2. Optional properties :local and/or :append, which will make the hook
      buffer-local or append to the list of hooks (respectively),
-  2. The hook(s) to be added to: either an unquoted mode, an unquoted list of
-     modes, a quoted hook variable or a quoted list of hook variables. If
-     unquoted, '-hook' will be appended to each symbol.
-  3. The function(s) to be added: this can be one function, a list thereof, a
-     list of `defun's, or body forms (implicitly wrapped in a closure).
+  3. The function(s) to be added: this can be one function, a quoted list
+     thereof, a list of `defun's, or body forms (implicitly wrapped in a
+     lambda).
 
-\(fn [:append :local] HOOKS FUNCTIONS)"
+\(fn HOOKS [:append :local] FUNCTIONS)"
   (declare (indent (lambda (indent-point state)
                      (goto-char indent-point)
                      (when (looking-at-p "\\s-*(")
@@ -275,7 +308,7 @@ This macro accepts, in order:
                        (mapcar #'doom-unquote rest)
                      (doom-enlist (doom-unquote (car rest))))))
 
-            ((setq func-forms (list `(lambda () ,@rest)))))
+            ((setq func-forms (list `(lambda (&rest _) ,@rest)))))
       (dolist (hook hook-forms)
         (dolist (func func-forms)
           (push (if remove-p
@@ -295,16 +328,12 @@ Takes the same arguments as `add-hook!'.
 
 If N and M = 1, there's no benefit to using this macro over `remove-hook'.
 
-\(fn [:append :local] HOOKS FUNCTIONS)"
+\(fn HOOKS [:append :local] FUNCTIONS)"
   (declare (indent defun) (debug t))
   `(add-hook! ,hooks :remove ,@rest))
 
 (defmacro setq-hook! (hooks &rest var-vals)
   "Sets buffer-local variables on HOOKS.
-
-  (setq-hook! 'markdown-mode-hook
-    line-spacing 2
-    fill-column 80)
 
 \(fn HOOKS &rest [SYM VAL]...)"
   (declare (indent 1))
@@ -322,7 +351,8 @@ If N and M = 1, there's no benefit to using this macro over `remove-hook'.
 \(fn HOOKS &rest [SYM VAL]...)"
   (declare (indent 1))
   (macroexp-progn
-   (cl-loop for (_var _val hook fn) in (doom--setq-hook-fns hooks vars 'singles)
+   (cl-loop for (_var _val hook fn)
+            in (doom--setq-hook-fns hooks vars 'singles)
             collect `(remove-hook ',hook #',fn))))
 
 (defmacro load! (filename &optional path noerror)
@@ -334,17 +364,22 @@ directory path). If omitted, the lookup is relative to either `load-file-name',
 `byte-compile-current-file' or `buffer-file-name' (checked in that order).
 
 If NOERROR is non-nil, don't throw an error if the file doesn't exist."
-  (unless path
-    (setq path (or (dir!)
+  (let* ((path (or path
+                   (dir!)
                    (error "Could not detect path to look for '%s' in"
-                          filename))))
-  (let ((file (if path `(expand-file-name ,filename ,path) filename)))
-    `(condition-case e
-         (load ,file ,noerror ,(not doom-debug-mode))
-       ((debug doom-error) (signal (car e) (cdr e)))
-       ((debug error)
+                          filename)))
+         (file (if path
+                  `(expand-file-name ,filename ,path)
+                filename)))
+    `(condition-case-unless-debug e
+         (let (file-name-handler-alist)
+           (load ,file ,noerror 'nomessage))
+       (doom-error (signal (car e) (cdr e)))
+       (error
         (let* ((source (file-name-sans-extension ,file))
-               (err (cond ((file-in-directory-p source doom-core-dir)
+               (err (cond ((not (featurep 'core))
+                           (cons 'error (file-name-directory path)))
+                          ((file-in-directory-p source doom-core-dir)
                            (cons 'doom-error doom-core-dir))
                           ((file-in-directory-p source doom-private-dir)
                            (cons 'doom-private-error doom-private-dir))
@@ -372,36 +407,37 @@ serve as a predicated alternative to `after!'."
            (put ',fn 'permanent-local-hook t)
            (add-hook 'after-load-functions #',fn)))))
 
-(defmacro defer-feature! (feature &optional mode)
-  "Pretend FEATURE hasn't been loaded yet, until FEATURE-hook is triggered.
+(defmacro defer-feature! (feature &optional fn)
+  "Pretend FEATURE hasn't been loaded yet, until FEATURE-hook or FN runs.
 
 Some packages (like `elisp-mode' and `lisp-mode') are loaded immediately at
 startup, which will prematurely trigger `after!' (and `with-eval-after-load')
 blocks. To get around this we make Emacs believe FEATURE hasn't been loaded yet,
-then wait until FEATURE-hook (or MODE-hook, if MODE is provided) is triggered to
+then wait until FEATURE-hook (or MODE-hook, if FN is provided) is triggered to
 reverse this and trigger `after!' blocks at a more reasonable time."
   (let ((advice-fn (intern (format "doom--defer-feature-%s-a" feature)))
-        (mode (or mode feature)))
+        (fn (or fn feature)))
     `(progn
        (setq features (delq ',feature features))
-       (advice-add #',mode :before #',advice-fn)
+       (advice-add #',fn :before #',advice-fn)
        (defun ,advice-fn (&rest _)
-         ;; Some plugins (like yasnippet) will invoke a mode early to parse
+         ;; Some plugins (like yasnippet) will invoke a fn early to parse
          ;; code, which would prematurely trigger this. In those cases, well
          ;; behaved plugins will use `delay-mode-hooks', which we can check for:
-         (when (and ,(intern (format "%s-hook" mode))
+         (when (and ,(intern (format "%s-hook" fn))
                     (not delay-mode-hooks))
            ;; ...Otherwise, announce to the world this package has been loaded,
            ;; so `after!' handlers can react.
            (provide ',feature)
-           (advice-remove #',mode #',advice-fn))))))
+           (advice-remove #',fn #',advice-fn))))))
 
 (defmacro quiet! (&rest forms)
   "Run FORMS without generating any output.
 
 This silences calls to `message', `load-file', `write-region' and anything that
 writes to `standard-output'."
-  `(cond (noninteractive
+  `(cond (doom-debug-mode ,@forms)
+         ((not doom-interactive-mode)
           (let ((old-fn (symbol-function 'write-region)))
             (cl-letf ((standard-output (lambda (&rest _)))
                       ((symbol-function 'load-file) (lambda (file) (load file nil t)))
@@ -411,8 +447,6 @@ writes to `standard-output'."
                          (unless visit (setq visit 'no-message))
                          (funcall old-fn start end filename append visit lockname mustbenew))))
               ,@forms)))
-         ((or doom-debug-mode debug-on-error debug-on-quit)
-          ,@forms)
          ((let ((inhibit-message t)
                 (save-silently t))
             (prog1 ,@forms (message ""))))))
@@ -439,10 +473,27 @@ DOCSTRING and BODY are as in `defun'.
             where-alist))
     `(progn
        (defun ,symbol ,arglist ,docstring ,@body)
-       ,(when where-alist
-          `(dolist (targets (list ,@(nreverse where-alist)))
-             (dolist (target (cdr targets))
-               (advice-add target (car targets) #',symbol)))))))
+       (dolist (targets (list ,@(nreverse where-alist)))
+         (dolist (target (cdr targets))
+           (advice-add target (car targets) #',symbol))))))
+
+(defmacro undefadvice! (symbol _arglist &optional docstring &rest body)
+  "Undefine an advice called SYMBOL.
+
+This has the same signature as `defadvice!' an exists as an easy undefiner when
+testing advice (when combined with `rotate-text').
+
+\(fn SYMBOL ARGLIST &optional DOCSTRING &rest [WHERE PLACES...] BODY\)"
+  (declare (doc-string 3) (indent defun))
+  (let (where-alist)
+    (unless (stringp docstring)
+      (push docstring body))
+    (while (keywordp (car body))
+      (push `(cons ,(pop body) (doom-enlist ,(pop body)))
+            where-alist))
+    `(dolist (targets (list ,@(nreverse where-alist)))
+       (dolist (target (cdr targets))
+         (advice-remove target #',symbol)))))
 
 (provide 'core-lib)
 ;;; core-lib.el ends here

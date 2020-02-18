@@ -7,9 +7,13 @@
     minibuffer-local-must-match-map
     minibuffer-local-isearch-map
     read-expression-map
-    ,@(when (featurep! :completion ivy)
-        '(ivy-minibuffer-map
-          ivy-switch-buffer-map)))
+    ,@(cond ((featurep! :completion ivy)
+             '(ivy-minibuffer-map
+               ivy-switch-buffer-map))
+            ((featurep! :completion helm)
+             '(helm-map
+               helm-ag-map
+               helm-read-file-map))))
   "A list of all the keymaps used for the minibuffer.")
 
 
@@ -19,20 +23,43 @@
 ;;;###package avy
 (setq avy-all-windows nil
       avy-all-windows-alt t
-      avy-background t)
+      avy-background t
+      ;; the unpredictability of this (when enabled) makes it a poor default
+      avy-single-candidate-jump nil)
 
 
 (after! epa
-  (setq epa-file-encrypt-to
-        (or epa-file-encrypt-to
-            ;; Collect all public key IDs with your username
-            (unless (string-empty-p user-full-name)
-              (cl-loop for key in (ignore-errors (epg-list-keys (epg-make-context) user-full-name))
-                       collect (epg-sub-key-id (car (epg-key-sub-key-list key)))))
-            user-mail-address)
-        ;; With GPG 2.1, this forces gpg-agent to use the Emacs minibuffer to
-        ;; prompt for the key passphrase.
-        epa-pinentry-mode 'loopback))
+  ;; With GPG 2.1+, this forces gpg-agent to use the Emacs minibuffer to prompt
+  ;; for the key passphrase.
+  (setq epa-pinentry-mode 'loopback)
+   ;; Default to the first secret key available in your keyring.
+  (setq-default
+   epa-file-encrypt-to
+   (or (default-value 'epa-file-encrypt-to)
+       (unless (string-empty-p user-full-name)
+         (cl-loop for key in (ignore-errors (epg-list-keys (epg-make-context) user-full-name))
+                  collect (epg-sub-key-id (car (epg-key-sub-key-list key)))))
+       user-mail-address))
+   ;; And suppress prompts if epa-file-encrypt-to has a default value (without
+   ;; overwriting file-local values).
+  (defadvice! +default--dont-prompt-for-keys-a (&rest _)
+    :before #'epa-file-write-region
+    (unless (local-variable-p 'epa-file-encrypt-to)
+      (setq-local epa-file-encrypt-to (default-value 'epa-file-encrypt-to)))))
+
+
+(use-package! drag-stuff
+  :defer t
+  :init
+  (map! "<M-up>"    #'drag-stuff-up
+        "<M-down>"  #'drag-stuff-down
+        "<M-left>"  #'drag-stuff-left
+        "<M-right>" #'drag-stuff-right))
+
+
+;;;###package tramp
+(unless IS-WINDOWS
+  (setq tramp-default-method "ssh")) ; faster than the default scp
 
 
 ;;
@@ -45,7 +72,7 @@
   ;;   (sp-pair "{" nil :post-handlers '(:rem ("| " "SPC")))
   (after! smartparens
     ;; Smartparens is broken in `cc-mode' as of Emacs 27. See
-    ;; <https://github.com/Fuco1/smartparens/issues/963>.
+    ;; https://github.com/Fuco1/smartparens/issues/963.
     (unless EMACS27+
       (pushnew! sp--special-self-insert-commands 'c-electric-paren 'c-electric-brace))
 
@@ -58,7 +85,7 @@
               sp-navigate-consider-sgml-tags nil)))
 
     ;; Autopair quotes more conservatively; if I'm next to a word/before another
-    ;; quote, I likely don't want to open a new pair.
+    ;; quote, I don't want to open a new pair or it would unbalance them.
     (let ((unless-list '(sp-point-before-word-p
                          sp-point-after-word-p
                          sp-point-before-same-p)))
@@ -96,9 +123,7 @@
     ;; Disable electric keys in C modes because it interferes with smartparens
     ;; and custom bindings. We'll do it ourselves (mostly).
     (after! cc-mode
-      (c-toggle-electric-state -1)
-      (c-toggle-auto-newline -1)
-      (setq c-electric-flag nil)
+      (setq-default c-electric-flag nil)
       (dolist (key '("#" "{" "}" "/" "*" ";" "," ":" "(" ")" "\177"))
         (define-key c-mode-base-map key nil))
 
@@ -195,10 +220,10 @@
     ;;  e) properly delete smartparen pairs when they are encountered, without
     ;;     the need for strict mode.
     ;;  f) do none of this when inside a string
-    (advice-add #'delete-backward-char :override #'+default*delete-backward-char))
+    (advice-add #'delete-backward-char :override #'+default--delete-backward-char-a))
 
   ;; Makes `newline-and-indent' continue comments (and more reliably)
-  (advice-add #'newline-and-indent :override #'+default*newline-indent-and-continue-comments))
+  (advice-add #'newline-and-indent :override #'+default--newline-indent-and-continue-comments-a))
 
 
 ;;
@@ -241,9 +266,9 @@
         "s--" #'doom/decrease-font-size
         ;; Conventional text-editing keys & motions
         "s-a" #'mark-whole-buffer
-        :g "s-/" (λ! (save-excursion (comment-line 1)))
-        :n "s-/" #'evil-commentary-line
-        :v "s-/" #'evil-commentary
+        "s-/" (λ! (save-excursion (comment-line 1)))
+        :n "s-/" #'evilnc-comment-or-uncomment-lines
+        :v "s-/" #'evilnc-comment-operator
         :gi  [s-backspace] #'doom/backward-kill-to-bol-and-indent
         :gi  [s-left]      #'doom/backward-to-bol-or-indent
         :gi  [s-right]     #'doom/forward-to-last-non-comment-or-eol
@@ -260,12 +285,10 @@
 (define-key! help-map
   ;; new keybinds
   "'"    #'describe-char
-  "B"    #'doom/open-bug-report
-  "D"    #'doom/help
+  "u"    #'doom/help-autodefs
   "E"    #'doom/sandbox
   "M"    #'doom/describe-active-minor-mode
   "O"    #'+lookup/online
-  "R"    #'doom/reload
   "T"    #'doom/toggle-profiler
   "V"    #'set-variable
   "W"    #'+default/man-or-woman
@@ -286,46 +309,69 @@
   "rf"   #'doom/reload-font
   "re"   #'doom/reload-env
 
+  ;; make `describe-bindings' available under the b prefix which it previously
+  ;; occupied. Add more binding related commands under that prefix as well
+  "b"    nil
+  "bb"   #'describe-bindings
+  "bi"   #'which-key-show-minor-mode-keymap
+  "bm"   #'which-key-show-major-mode
+  "bt"   #'which-key-show-top-level
+  "bf"   #'which-key-show-full-keymap
+  "bk"   #'which-key-show-keymap
+
   ;; replaces `apropos-documentation' b/c `apropos' covers this
   "d"    nil
-  "d/"   #'doom/help-search
-  "da"   #'doom/help-autodefs
   "db"   #'doom/report-bug
+  "dc"   #'doom/goto-private-config-file
+  "dC"   #'doom/goto-private-init-file
   "dd"   #'doom/toggle-debug-mode
   "df"   #'doom/help-faq
   "dh"   #'doom/help
+  "dl"   #'doom/help-search-load-path
+  "dL"   #'doom/help-search-loaded-files
   "dm"   #'doom/help-modules
   "dn"   #'doom/help-news
   "dN"   #'doom/help-news-search
-  "dp"   #'doom/help-packages
-  "dP"   #'doom/help-package-homepage
-  "dc"   #'doom/help-package-config
-  "ds"   #'doom/sandbox
+  "dpc"  #'doom/help-package-config
+  "dpd"  #'doom/goto-private-packages-file
+  "dph"  #'doom/help-package-homepage
+  "dpp"  #'doom/help-packages
+  "ds"   #'doom/help-search-headings
+  "dS"   #'doom/help-search
   "dt"   #'doom/toggle-profiler
+  "du"   #'doom/help-autodefs
   "dv"   #'doom/version
+  "dx"   #'doom/sandbox
 
   ;; replaces `apropos-command'
   "a"    #'apropos
+  "A"    #'apropos-documentation
   ;; replaces `describe-copying' b/c not useful
   "C-c"  #'describe-coding-system
   ;; replaces `Info-got-emacs-command-node' b/c redundant w/ `Info-goto-node'
   "F"    #'describe-face
   ;; replaces `view-hello-file' b/c annoying
-  "h"    #'doom/help
-  ;; replaces `describe-language-environment' b/c remapped to C-l
-  "L"    #'global-command-log-mode
+  "h"    nil
   ;; replaces `view-emacs-news' b/c it's on C-n too
   "n"    #'doom/help-news
-  ;; replaces `finder-by-keyword'
+  ;; replaces `help-with-tutorial', b/c it's less useful than `load-theme'
+  "t"    #'load-theme
+  ;; replaces `finder-by-keyword' b/c not useful
   "p"    #'doom/help-packages
-  ;; replaces `describe-package' b/c redundant w/ `doom/describe-package'
+  ;; replaces `describe-package' b/c redundant w/ `doom/help-packages'
   "P"    #'find-library)
 
 (after! which-key
-  (which-key-add-key-based-replacements "C-h r" "reload")
-  (when (featurep 'evil)
-    (which-key-add-key-based-replacements (concat doom-leader-key     " r") "reload")
-    (which-key-add-key-based-replacements (concat doom-leader-alt-key " r") "reload")))
+  (let ((prefix-re (regexp-opt (list doom-leader-key doom-leader-alt-key))))
+    (cl-pushnew `((,(format "\\`\\(?:<\\(?:\\(?:f1\\|help\\)>\\)\\|C-h\\|%s h\\) d\\'" prefix-re))
+                  nil . "doom")
+                which-key-replacement-alist)
+    (cl-pushnew `((,(format "\\`\\(?:<\\(?:\\(?:f1\\|help\\)>\\)\\|C-h\\|%s h\\) r\\'" prefix-re))
+                  nil . "reload")
+                which-key-replacement-alist)
+    (cl-pushnew `((,(format "\\`\\(?:<\\(?:\\(?:f1\\|help\\)>\\)\\|C-h\\|%s h\\) b\\'" prefix-re))
+                  nil . "bindings")
+                which-key-replacement-alist)))
 
 
 (when (featurep! +bindings)
@@ -351,14 +397,11 @@
         ;; which ctrl+RET will add a new "item" below the current one and
         ;; cmd+RET (Mac) / meta+RET (elsewhere) will add a new, blank line below
         ;; the current one.
-        :gni [C-return]    #'+default/newline-below
-        :gni [C-S-return]  #'+default/newline-above
+        :gn [C-return]    #'+default/newline-below
+        :gn [C-S-return]  #'+default/newline-above
         (:when IS-MAC
-          :gni [s-return]    #'+default/newline-below
-          :gni [S-s-return]  #'+default/newline-above)
-        (:unless IS-MAC
-          :gni [M-return]    #'+default/newline-below
-          :gni [M-S-return]  #'+default/newline-above)))
+          :gn [s-return]    #'+default/newline-below
+          :gn [S-s-return]  #'+default/newline-above)))
 
 
 ;;

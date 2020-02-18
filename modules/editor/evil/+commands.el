@@ -4,6 +4,7 @@
 ;;; Custom commands
 ;; Editing
 (evil-ex-define-cmd "@"            #'+evil:macro-on-all-lines)   ; TODO Test me
+(evil-ex-define-cmd "R[ead]"       #'+evil:read)
 (evil-ex-define-cmd "al[ign]"      #'+evil:align)
 (evil-ex-define-cmd "ral[ign]"     #'+evil:align-right)
 (evil-ex-define-cmd "enhtml"       #'+web:encode-html-entities)
@@ -13,6 +14,7 @@
 (evil-ex-define-cmd "na[rrow]"     #'+evil:narrow-buffer)
 (evil-ex-define-cmd "retab"        #'+evil:retab)
 (evil-ex-define-cmd "rev[erse]"    #'+evil:reverse-lines)
+(evil-ex-define-cmd "l[ine]diff"   #'evil-quick-diff)
 
 ;;; External resources
 ;; TODO (evil-ex-define-cmd "db"          #'doom:db)
@@ -33,7 +35,7 @@
 ;;; GIT
 (evil-ex-define-cmd "gist"        #'+gist:send)  ; send current buffer/region to gist
 (evil-ex-define-cmd "gistl"       #'+gist:list)  ; list gists by user
-(evil-ex-define-cmd "gbrowse"     #'+vc:git-browse)       ; show file/region in github/gitlab
+(evil-ex-define-cmd "gbrowse"     #'+vc/browse-at-remote-file-or-region) ; show file/region in github/gitlab
 (evil-ex-define-cmd "gissues"     #'forge-browse-issues)  ; show github issues
 (evil-ex-define-cmd "git"         #'magit-status)         ; open magit status window
 (evil-ex-define-cmd "gstage"      #'magit-stage)
@@ -56,29 +58,19 @@
 (evil-ex-define-cmd "cd"          #'+evil:cd)
 (evil-ex-define-cmd "pwd"         #'+evil:pwd)
 
+(evil-define-command +evil:swiper (&optional search)
+  "Invoke `swiper' with SEARCH, otherwise with the symbol at point."
+  (interactive "<a>")
+  (swiper-isearch search))
+(evil-ex-define-cmd "sw[iper]" #'+evil:swiper)
+
 (cond ((featurep! :completion ivy)
-       (evil-ex-define-cmd "ag"        #'+ivy:ag)
-       (evil-ex-define-cmd "agc[wd]"   #'+ivy:ag-from-cwd)
-       (evil-ex-define-cmd "rg"        #'+ivy:rg)
-       (evil-ex-define-cmd "rgc[wd]"   #'+ivy:rg-from-cwd)
-       (evil-ex-define-cmd "pt"        #'+ivy:pt)
-       (evil-ex-define-cmd "ptc[wd]"   #'+ivy:pt-from-cwd)
-       (evil-ex-define-cmd "grep"      #'+ivy:grep)
-       (evil-ex-define-cmd "grepc[wd]" #'+ivy:grep-from-cwd)
-       (evil-ex-define-cmd "sw[iper]"  #'+ivy:swiper)
-       (evil-ex-define-cmd "todo"      #'+ivy:todo))
+       (evil-ex-define-cmd "pg[rep]"   #'+ivy:project-search)
+       (evil-ex-define-cmd "pg[grep]d" #'+ivy:project-search-from-cwd))
 
       ((featurep! :completion helm)
-       (evil-ex-define-cmd "ag"        #'+helm:ag)
-       (evil-ex-define-cmd "agc[wd]"   #'+helm:ag-from-cwd)
-       (evil-ex-define-cmd "rg"        #'+helm:rg)
-       (evil-ex-define-cmd "rgc[wd]"   #'+helm:rg-from-cwd)
-       (evil-ex-define-cmd "pt"        #'+helm:pt)
-       (evil-ex-define-cmd "ptc[wd]"   #'+helm:pt-from-cwd)
-       (evil-ex-define-cmd "grep"      #'+helm:grep)
-       (evil-ex-define-cmd "grepc[wd]" #'+helm:grep-from-cwd)
-       ;; (evil-ex-define-cmd "todo"     #'+helm:todo) TODO implement `+helm:todo'
-       ))
+       (evil-ex-define-cmd "pg[rep]"   #'+helm:project-search)
+       (evil-ex-define-cmd "pg[grep]d" #'+helm:project-search-from-cwd)))
 
 ;;; Project tools
 (evil-ex-define-cmd "compile"     #'+evil:compile)

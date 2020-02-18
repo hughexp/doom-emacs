@@ -1,11 +1,6 @@
 ;; -*- no-byte-compile: t; -*-
 ;;; lang/rust/packages.el
 
-(when EMACS26+
-  (package! rustic))
-(package! rust-mode)
+(package! rustic :pin "da3820de18")
 (unless (featurep! +lsp)
-  (package! racer))
-
-;;
-(package! cargo)
+  (package! racer :pin "a0bdf778f0"))

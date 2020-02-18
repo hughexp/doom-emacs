@@ -1,27 +1,46 @@
 ;;; ui/doom/config.el -*- lexical-binding: t; -*-
 
 (defvar +doom-solaire-themes
-  '((doom-city-lights . t)
+  '((doom-acario-dark . t)
+    (doom-acario-light . t)
+    (doom-challenger-deep . t)
+    (doom-city-lights . t)
+    (doom-dark+ . t)
     (doom-dracula . t)
-    (doom-molokai)
+    (doom-fairy-floss . t)
+    (doom-gruvbox . t)
+    (doom-horizon . t)
+    (doom-laserwave . t)
+    (doom-losvkem . t)
+    (doom-manegarm . t)
+    (doom-material . t)
+    (doom-molokai . t)
+    (doom-moonlight . t)
     (doom-nord . t)
     (doom-nord-light . t)
-    (doom-nova)
+    (doom-nova . t)
+    (doom-oceanic-next . t)
     (doom-one . t)
     (doom-one-light . t)
+    (doom-outrun-electric . t)
     (doom-opera . t)
+    (doom-palenight . t)
+    (doom-peacock . t)
+    (doom-snazzy . t)
+    (doom-solarized-dark . t)
     (doom-solarized-light)
-    (doom-spacegrey)
-    (doom-vibrant)
-    (doom-tomorrow-night))
-  "An alist of themes that support `solaire-mode'. If CDR is t, then use
-`solaire-mode-swap-bg'.")
+    (doom-sourcerer . t)
+    (doom-spacegrey . t)
+    (doom-tomorrow-day . t)
+    (doom-tomorrow-night . t)
+    (doom-vibrant . t))
+  "An alist of themes that support `solaire-mode'. If CDR is t, then
+`solaire-mode-swap-bg' will be used automatically, when the theme is loaded.")
 
 
 ;;
-;; Packages
+;;; Packages
 
-;; <https://github.com/hlissner/emacs-doom-theme>
 (use-package! doom-themes
   :defer t
   :init
@@ -41,11 +60,12 @@
 
 
 (use-package! solaire-mode
+  :when (or (daemonp) (display-graphic-p))
   :defer t
   :init
   (add-hook! 'doom-load-theme-hook :append
     (defun +doom-solaire-mode-swap-bg-maybe-h ()
-      (pcase-let ((`(,theme . ,swap) (assq doom-theme +doom-solaire-themes)))
+      (pcase-let ((`(,_theme . ,swap) (assq doom-theme +doom-solaire-themes)))
         (require 'solaire-mode)
         (if swap (solaire-mode-swap-bg)))))
   :config
@@ -60,8 +80,8 @@
 
   ;; On Emacs 26+, when point is on the last line and solaire-mode is remapping
   ;; the hl-line face, hl-line's highlight bleeds into the rest of the window
-  ;; after eob.
-  (when EMACS26+
+  ;; after eob. On Emacs 27 this no longer happens.
+  (unless EMACS27+
     (defun +doom--line-range-fn ()
       (cons (line-beginning-position)
             (cond ((let ((eol (line-end-position)))

@@ -1,6 +1,8 @@
 ;;; core/cli/byte-compile.el -*- lexical-binding: t; -*-
 
-(defcli! (compile c) (&rest targets)
+(defcli! (compile c)
+    ((recompile-p ["-r" "--recompile"])
+     &rest targets)
   "Byte-compiles your config or selected modules.
 
   compile [TARGETS...]
@@ -10,14 +12,11 @@
 Accepts :core and :private as special arguments, which target Doom's core files
 and your private config files, respectively. To recompile your packages, use
 'doom rebuild' instead."
-  (doom-byte-compile targets))
-
-(defcli! (recompile rc) (&rest targets)
-  "Re-byte-compiles outdated *.elc files."
-  (doom-byte-compile targets 'recompile))
+  (doom-cli-byte-compile targets recompile-p))
 
 (defcli! clean ()
   "Delete all *.elc files."
+  :bare t
   (doom-clean-byte-compiled-files))
 
 
@@ -28,10 +27,11 @@ and your private config files, respectively. To recompile your packages, use
   (let ((filename (file-name-nondirectory path)))
     (or (string-prefix-p "." filename)
         (string-prefix-p "test-" filename)
+        (string-suffix-p ".example.el" filename)
         (not (equal (file-name-extension path) "el"))
         (member filename (list "packages.el" "doctor.el")))))
 
-(cl-defun doom-byte-compile (&optional modules recompile-p)
+(cl-defun doom-cli-byte-compile (&optional modules recompile-p)
   "Byte compiles your emacs configuration.
 
 init.el is always byte-compiled by this.
@@ -92,10 +92,10 @@ If RECOMPILE-P is non-nil, only recompile out-of-date files."
 
       ;; But first we must be sure that Doom and your private config have been
       ;; fully loaded. Which usually aren't so in an noninteractive session.
-      (let (noninteractive)
-        (doom-initialize 'force)
-        (doom-initialize-core)
-        (doom-initialize-modules 'force))
+      (let ((doom-interactive-mode 'byte-compile))
+        (doom-initialize)
+        (doom-initialize-packages)
+        (doom-initialize-core))
 
       ;;
       (unless target-dirs
@@ -124,9 +124,9 @@ If RECOMPILE-P is non-nil, only recompile out-of-date files."
       (cl-return nil))
 
     (print!
-     (info (if recompile-p
-               "Recompiling stale elc files..."
-             "Byte-compiling your config (may take a while)...")))
+     (start (if recompile-p
+                "Recompiling stale elc files..."
+              "Byte-compiling your config (may take a while)...")))
     (print-group!
      (require 'use-package)
      (condition-case e
@@ -150,14 +150,14 @@ If RECOMPILE-P is non-nil, only recompile out-of-date files."
            (unless recompile-p
              (doom-clean-byte-compiled-files))
 
-           (dolist (target (delete-dups targets))
+           (dolist (target (delete-dups (delq nil targets)))
              (cl-incf
               (if (not (or (not recompile-p)
                            (let ((elc-file (byte-compile-dest-file target)))
                              (and (file-exists-p elc-file)
                                   (file-newer-than-file-p target elc-file)))))
                   total-noop
-                (pcase (if (doom-file-cookie-p target)
+                (pcase (if (doom-file-cookie-p target "if" t)
                            (byte-compile-file target)
                          'no-byte-compile)
                   (`no-byte-compile
@@ -184,6 +184,7 @@ If RECOMPILE-P is non-nil, only recompile out-of-date files."
 (defun doom-clean-byte-compiled-files ()
   "Delete all the compiled elc files in your Emacs configuration and private
 module. This does not include your byte-compiled, third party packages.'"
+  (require 'core-modules)
   (print! (start "Cleaning .elc files"))
   (print-group!
    (cl-loop with default-directory = doom-emacs-dir
@@ -200,4 +201,5 @@ module. This does not include your byte-compiled, third party packages.'"
             finally do
             (print! (if success
                         (success "All elc files deleted")
-                      (info "No elc files to clean"))))))
+                      (info "No elc files to clean"))))
+   t))

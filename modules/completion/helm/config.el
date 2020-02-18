@@ -1,15 +1,5 @@
 ;;; completion/helm/config.el -*- lexical-binding: t; -*-
 
-(defvar +helm-project-search-engines '(rg ag pt)
-  "What search tools for `+helm/project-search' (and `+helm-file-search' when no
-ENGINE is specified) to try, and in what order.
-
-To disable a particular tool, remove it from this list. To prioritize a tool
-over others, move it to the front of the list. Later duplicates in this list are
-silently ignored.
-
-This falls back to git-grep (then grep) if none of these available.")
-
 ;; Posframe (requires +childframe)
 (defvar +helm-posframe-handler #'+helm-poshandler-frame-center-near-bottom-fn
   "The function that determines the location of the childframe. It should return
@@ -41,6 +31,7 @@ be negative.")
         [remap bookmark-jump]             #'helm-bookmarks
         [remap execute-extended-command]  #'helm-M-x
         [remap find-file]                 #'helm-find-files
+        [remap locate]                    #'helm-locate
         [remap imenu]                     #'helm-semantic-or-imenu
         [remap noop-show-kill-ring]       #'helm-show-kill-ring
         [remap persp-switch-to-buffer]    #'+helm/workspace-mini
@@ -66,8 +57,6 @@ be negative.")
         helm-mode-line-string nil
         helm-ff-auto-update-initial-value nil
         helm-find-files-doc-header nil
-        ;; Don't override evil-ex's completion
-        helm-mode-handle-completion-in-region nil
         ;; Default helm window sizes
         helm-display-buffer-default-width nil
         helm-display-buffer-default-height 0.25
@@ -81,12 +70,14 @@ be negative.")
     (setq helm-default-prompt-display-function #'+helm--set-prompt-display))
 
   :init
-  (when (and EMACS26+ (featurep! +childframe))
+  (when (featurep! +childframe)
+    ;; If this is set to 'iconify-top-level then Emacs will be minimized upon
+    ;; helm completion.
+    (setq iconify-child-frame 'make-invisible)
     (setq helm-display-function #'+helm-posframe-display-fn))
 
   (let ((fuzzy (featurep! +fuzzy)))
     (setq helm-M-x-fuzzy-match fuzzy
-          helm-ag-fuzzy-match fuzzy
           helm-apropos-fuzzy-match fuzzy
           helm-apropos-fuzzy-match fuzzy
           helm-bookmark-show-location fuzzy
@@ -110,9 +101,9 @@ be negative.")
   ;; HACK Doom doesn't support these commands, which invite the user to install
   ;; the package via ELPA. Force them to use +helm/* instead, because they work
   ;; out of the box.
-  (advice-add #'helm-projectile-rg :override #'+helm/rg)
-  (advice-add #'helm-projectile-ag :override #'+helm/ag)
-  (advice-add #'helm-projectile-grep :override #'+helm/grep)
+  (advice-add #'helm-projectile-rg :override #'+helm/project-search)
+  (advice-add #'helm-projectile-ag :override #'+helm/project-search)
+  (advice-add #'helm-projectile-grep :override #'+helm/project-search)
 
   ;; Hide the modeline
   (defun +helm--hide-mode-line (&rest _)
@@ -122,6 +113,9 @@ be negative.")
   (add-hook 'helm-after-initialize-hook #'+helm--hide-mode-line)
   (advice-add #'helm-display-mode-line :override #'+helm--hide-mode-line)
   (advice-add #'helm-ag-show-status-default-mode-line :override #'ignore)
+
+  ;; Hide minibuffer if `helm-echo-input-in-header-line'
+  (add-hook 'helm-minibuffer-set-up-hook #'helm-hide-minibuffer-maybe)
 
   ;; Use helpful instead of describe-* to display documentation
   (dolist (fn '(helm-describe-variable helm-describe-function))
@@ -134,34 +128,47 @@ be negative.")
   :config (helm-flx-mode +1))
 
 
-;;;###package helm-ag
-(after! helm-ag
-  (map! :map helm-ag-edit-map :n "RET" #'compile-goto-error)
-  (define-key helm-ag-edit-map [remap quit-window] #'helm-ag--edit-abort)
-  (set-popup-rule! "^\\*helm-ag-edit" :size 0.35 :ttl 0 :quit nil)
-  ;; Recenter after jumping to match
-  (advice-add #'helm-ag--find-file-action :after-while #'doom-recenter-a)
-  ;; And record position before jumping
-  (advice-add #'helm-ag--find-file-action :around #'doom-set-jump-maybe-a))
+(after! helm-rg
+  (setq helm-rg-display-buffer-normal-method #'pop-to-buffer)
+  (set-popup-rule! "^helm-rg-" :ttl nil :select t :size 0.45)
+  (map! :map helm-rg-map
+        "C-c C-e" #'helm-rg--bounce)
+  (map! :map helm-rg--bounce-mode-map
+        "q" #'kill-current-buffer
+        "C-c C-c" (λ! (helm-rg--bounce-dump) (kill-current-buffer))
+        "C-x C-c" #'helm-rg--bounce-dump-current-file
+        "C-c C-k" #'kill-current-buffer))
 
 
 ;;;###package helm-bookmark
 (setq helm-bookmark-show-location t)
 
 
-;;;###package helm-files
 (after! helm-files
   (setq helm-boring-file-regexp-list
         (append (list "\\.projects$" "\\.DS_Store$")
                 helm-boring-file-regexp-list)))
 
 
-;;;###package helm-locate
 (defvar helm-generic-files-map (make-sparse-keymap))
-(after! helm-locate (set-keymap-parent helm-generic-files-map helm-map))
+(after! helm-locate
+  (when (and IS-MAC
+             (null helm-locate-command)
+             (executable-find "mdfind"))
+    (setq helm-locate-command "mdfind -name %s"))
+  (set-keymap-parent helm-generic-files-map helm-map))
 
 
-;;;###package helm-projectile
+(use-package! helm-org
+  :when (featurep! :lang org)
+  :defer t
+  :init
+  (after! helm-mode
+    (pushnew! helm-completing-read-handlers-alist
+              '(org-capture . helm-org-completing-read-tags)
+              '(org-set-tags . helm-org-completing-read-tags))))
+
+
 (use-package! helm-projectile
   :commands (helm-projectile-find-file
              helm-projectile-recentf
@@ -174,7 +181,7 @@ be negative.")
   (set-keymap-parent helm-projectile-find-file-map helm-map))
 
 
-;;;###package swiper-helm
+(setq ivy-height 20) ; for `swiper-isearch'
 (after! swiper-helm
   (setq swiper-helm-display-function
         (lambda (buf &optional _resume) (pop-to-buffer buf)))

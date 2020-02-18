@@ -65,9 +65,10 @@ Docsets must be installed with one of the following commands:
 + `dash-docs-async-install-docset-from-file'
 
 Docsets can be searched directly via `+lookup/in-docsets'."
-  (when-let (docsets (cl-remove-if-not #'dash-docs-docset-path (dash-docs-buffer-local-docsets)))
-    (+lookup/in-docsets nil identifier docsets)
-    'deferred))
+  (when (require 'dash-docs nil t)
+    (when-let (docsets (cl-remove-if-not #'dash-docs-docset-path (dash-docs-buffer-local-docsets)))
+      (+lookup/in-docsets nil identifier docsets)
+      'deferred)))
 
 
 ;;
@@ -89,7 +90,7 @@ installed with `dash-docs-install-docset'."
          (if arg
              (dash-docs-installed-docsets)
            (cl-remove-if-not #'dash-docs-docset-path (or docsets dash-docs-docsets))))
-        (query (or query (+lookup-symbol-or-region) "")))
+        (query (doom-thing-at-point-or-region query)))
     (doom-log "Searching docsets %s" dash-docs-docsets)
     (cond ((featurep! :completion helm)
            (helm-dash query))

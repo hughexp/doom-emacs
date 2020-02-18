@@ -30,21 +30,12 @@ This is ignored by ccls.")
 
 
 ;;
-;; Packages
+;;; Packages
 
 (use-package! cc-mode
   :commands (c-mode c++-mode objc-mode java-mode)
   :mode ("\\.mm\\'" . objc-mode)
   :init
-  (setq-default c-basic-offset tab-width
-                c-backspace-function #'delete-backward-char
-                c-default-style "doom")
-
-  ;; The plusses in c++-mode can be annoying to search for ivy/helm (which reads
-  ;; queries as regexps), so we add these for convenience.
-  (defalias 'cpp-mode 'c++-mode)
-  (defvaralias 'cpp-mode-map 'c++-mode-map)
-
   ;; Activate `c-mode', `c++-mode' or `objc-mode' depending on heuristics
   (add-to-list 'auto-mode-alist '("\\.h\\'" . +cc-c-c++-objc-mode))
 
@@ -85,9 +76,11 @@ This is ignored by ccls.")
   (add-hook! '(c-mode-hook c++-mode-hook) #'+cc-fontify-constants-h)
 
   ;; Custom style, based off of linux
+  (setq c-basic-offset tab-width
+        c-backspace-function #'delete-backward-char)
+
   (c-add-style
-   "doom" '((c-basic-offset . tab-width)
-            (c-comment-only-line-offset . 0)
+   "doom" '((c-comment-only-line-offset . 0)
             (c-hanging-braces-alist (brace-list-open)
                                     (brace-entry-open)
                                     (substatement-open after)
@@ -114,7 +107,13 @@ This is ignored by ccls.")
              ;; another level
              (access-label . -)
              (inclass +cc-c++-lineup-inclass +)
-             (label . 0)))))
+             (label . 0))))
+
+  (when (listp c-default-style)
+    (setf (alist-get 'other c-default-style) "doom"))
+
+  (after! ffap
+    (add-to-list 'ffap-alist '(c-mode . ffap-c-mode))))
 
 
 (use-package! modern-cpp-font-lock
@@ -145,7 +144,7 @@ This is ignored by ccls.")
     :hook (irony-mode . irony-eldoc))
 
   (use-package! flycheck-irony
-    :when (featurep! :tools flycheck)
+    :when (featurep! :checkers syntax)
     :config (flycheck-irony-setup))
 
   (use-package! company-irony
@@ -159,6 +158,10 @@ This is ignored by ccls.")
 
 ;;
 ;; Major modes
+
+(use-package! cmake-mode
+  :defer t
+  :config (set-docsets! 'cmake-mode "CMake"))
 
 (use-package! company-cmake  ; for `cmake-mode'
   :when (featurep! :completion company)
@@ -248,4 +251,11 @@ This is ignored by ccls.")
   (after! projectile
     (add-to-list 'projectile-globally-ignored-directories ".ccls-cache")
     (add-to-list 'projectile-project-root-files-bottom-up ".ccls-root")
-    (add-to-list 'projectile-project-root-files-top-down-recurring "compile_commands.json")))
+    (add-to-list 'projectile-project-root-files-top-down-recurring "compile_commands.json"))
+  :config
+  (when IS-MAC
+    (setq ccls-initialization-options
+          `(:clang ,(list :extraArgs ["-isystem/Library/Developer/CommandLineTools/usr/include/c++/v1"
+                                      "-isystem/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include"
+                                      "-isystem/usr/local/include"]
+                          :resourceDir (string-trim (shell-command-to-string "clang -print-resource-dir")))))))

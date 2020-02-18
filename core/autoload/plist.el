@@ -9,9 +9,9 @@
 
 Evaluate BODY with either ARGLIST bound to (cons PROP VAL) or, if ARGLIST is a
 list, the pair is destructured into (CAR . CDR)."
-  (declare (indent defun))
+  (declare (indent 1))
   (let ((plist-var (make-symbol "plist")))
-    `(let ((,plist-var ,plist))
+    `(let ((,plist-var (copy-sequence ,plist)))
        (while ,plist-var
          (let ,(if (listp arglist)
                    `((,(pop arglist) (pop ,plist-var))
@@ -22,9 +22,13 @@ list, the pair is destructured into (CAR . CDR)."
        ,retval)))
 
 ;;;###autoload
-(defmacro plist-put! (plist prop value)
-  "Set PROP to VALUE in PLIST in-place."
-  `(setq ,plist (plist-put ,plist ,prop ,value)))
+(defmacro plist-put! (plist &rest rest)
+  "Set each PROP VALUE pair in REST to PLIST in-place."
+  `(cl-loop for (prop value)
+            on (list ,@rest) by #'cddr
+            do ,(if (symbolp plist)
+                    `(setq ,plist (plist-put ,plist prop value))
+                  `(plist-put ,plist prop value))))
 
 ;;;###autoload
 (defmacro plist-delete! (plist prop)
@@ -62,7 +66,7 @@ BODY."
 
 ;;;###autoload
 (defun doom-plist-merge (from-plist to-plist)
-  "Destructively merge FROM-PLIST onto TO-PLIST"
+  "Non-destructively merge FROM-PLIST onto TO-PLIST"
   (let ((plist (copy-sequence from-plist)))
     (while plist
       (plist-put! to-plist (pop plist) (pop plist)))
@@ -79,11 +83,11 @@ BODY."
     p))
 
 ;;;###autoload
-(defun doom-plist-delete (plist prop)
-  "Delete PROP from a copy of PLIST."
+(defun doom-plist-delete (plist &rest props)
+  "Delete PROPS from a copy of PLIST."
   (let (p)
     (while plist
-      (if (not (eq prop (car plist)))
+      (if (not (memq (car plist) props))
           (plist-put! p (car plist) (nth 1 plist)))
       (setq plist (cddr plist)))
     p))
