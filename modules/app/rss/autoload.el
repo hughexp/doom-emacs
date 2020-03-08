@@ -1,10 +1,8 @@
 ;;; app/rss/autoload.el -*- lexical-binding: t; -*-
 
 ;;;###autoload
-(defun =rss ()
-  "Activate (or switch to) `elfeed' in its workspace."
-  (interactive)
-  (call-interactively #'elfeed))
+(defalias '=rss #'elfeed
+  "Activate (or switch to) `elfeed' in its workspace.")
 
 ;;;###autoload
 (defun +rss/delete-pane ()
@@ -48,20 +46,24 @@
 ;; Hooks
 
 ;;;###autoload
-(defun +rss|elfeed-wrap ()
+(defun +rss-elfeed-wrap-h ()
   "Enhances an elfeed entry's readability by wrapping it to a width of
-`fill-column' and centering it with `visual-fill-column-mode'."
+`fill-column'."
   (let ((inhibit-read-only t)
         (inhibit-modification-hooks t))
     (setq-local truncate-lines nil)
+    (setq-local shr-use-fonts nil)
     (setq-local shr-width 85)
     (set-buffer-modified-p nil)))
 
 ;;;###autoload
-(defun +rss|cleanup ()
+(defun +rss-cleanup-h ()
   "Clean up after an elfeed session. Kills all elfeed and elfeed-org files."
   (interactive)
-  (elfeed-db-compact)
+  ;; `delete-file-projectile-remove-from-cache' slows down `elfeed-db-compact'
+  ;; tremendously, so we disable the projectile cache:
+  (let (projectile-enable-caching)
+    (elfeed-db-compact))
   (let ((buf (previous-buffer)))
     (when (or (null buf) (not (doom-real-buffer-p buf)))
       (switch-to-buffer (doom-fallback-buffer))))
@@ -69,11 +71,11 @@
         (show-buffers (doom-buffers-in-mode 'elfeed-show-mode))
         kill-buffer-query-functions)
     (dolist (file +rss-elfeed-files)
-      (when-let* ((buf (get-file-buffer (expand-file-name file org-directory))))
+      (when-let (buf (get-file-buffer (expand-file-name file org-directory)))
         (kill-buffer buf)))
     (dolist (b search-buffers)
       (with-current-buffer b
-        (remove-hook 'kill-buffer-hook #'+rss|cleanup :local)
+        (remove-hook 'kill-buffer-hook #'+rss-cleanup-h :local)
         (kill-buffer b)))
     (mapc #'kill-buffer show-buffers)))
 
@@ -97,7 +99,7 @@
              collect url)))
 
 ;;;###autoload
-(defun +rss-put-sliced-image (spec alt &optional flags)
+(defun +rss-put-sliced-image-fn (spec alt &optional flags)
   "TODO"
   (cl-letf (((symbol-function #'insert-image)
              (lambda (image &optional alt _area _slice)
@@ -106,7 +108,7 @@
     (shr-put-image spec alt flags)))
 
 ;;;###autoload
-(defun +rss-render-image-tag-without-underline (dom &optional url)
+(defun +rss-render-image-tag-without-underline-fn (dom &optional url)
   "TODO"
   (let ((start (point)))
     (shr-tag-img dom url)

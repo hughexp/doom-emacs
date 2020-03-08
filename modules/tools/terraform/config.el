@@ -1,5 +1,9 @@
 ;;; tools/terraform/config.el -*- lexical-binding: t; -*-
 
+(when (featurep! +lsp)
+  (add-hook 'terraform-mode-local-vars-hook #'lsp!))
+
+
 (map! :after terraform-mode
       :map terraform-mode-map
       :localleader
@@ -8,7 +12,7 @@
       :desc "terraform plan"  "p" (λ! (compile "terraform plan")))
 
 
-(def-package! company-terraform
+(use-package! company-terraform
   :when (featurep! :completion company)
   :after terraform-mode
   :config

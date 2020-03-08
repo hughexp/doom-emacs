@@ -4,7 +4,7 @@
   "The name to use for the twitter workspace.")
 
 ;;;###autoload
-(defun +twitter-display-buffer (buf)
+(defun +twitter-display-buffer-fn (buf)
   "A replacement display-buffer command for `twittering-pop-to-buffer-function'
 that works with the feature/popup module."
   (let ((win (selected-window)))
@@ -29,7 +29,7 @@ that works with the feature/popup module."
   (interactive "P")
   (condition-case _
       (progn
-        (if (and (not arg) (featurep! :feature workspaces))
+        (if (and (not arg) (featurep! :ui workspaces))
             (+workspace/new +twitter-workspace-name)
           (setq +twitter--old-wconf (current-window-configuration))
           (delete-other-windows)
@@ -52,7 +52,7 @@ that works with the feature/popup module."
   (when (eq major-mode 'twittering-mode)
     (twittering-kill-buffer)
     (cond ((one-window-p) (+twitter/quit-all))
-          ((featurep! :feature workspaces)
+          ((featurep! :ui workspaces)
            (+workspace/close-window-or-workspace))
           ((delete-window)))))
 
@@ -60,7 +60,7 @@ that works with the feature/popup module."
 (defun +twitter/quit-all ()
   "Close all open `twitter-mode' buffers and the associated workspace, if any."
   (interactive)
-  (when (featurep! :feature workspaces)
+  (when (featurep! :ui workspaces)
     (+workspace/delete +twitter-workspace-name))
   (when +twitter--old-wconf
     (set-window-configuration +twitter--old-wconf)
@@ -82,6 +82,8 @@ that works with the feature/popup module."
 (defun +twitter/ace-link ()
   "Open a visible link, username or hashtag in a `twittering-mode' buffer."
   (interactive)
+  (require 'avy)
+  ;; REVIEW Is this necessary anymore with `link-hint'
   (let ((pt (avy-with +twitter/ace-link
               (avy--process
                (+twitter--collect-links)

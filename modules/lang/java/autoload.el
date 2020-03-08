@@ -23,12 +23,14 @@
       (buffer-substring-no-properties beg end))))
 
 ;;;###autoload
-(defun +java|android-mode-maybe ()
-  (when (project-file-exists-p! (or "local.properties"
-                                    "AndroidManifest.xml"
+(defun +java-android-mode-maybe-h ()
+  "Enable `android-mode' if this looks like an android project.
+
+It determines this by the existence of AndroidManifest.xml or
+src/main/AndroidManifest.xml."
+  (when (project-file-exists-p! (or "AndroidManifest.xml"
                                     "src/main/AndroidManifest.xml"))
-    (android-mode +1)
-    (doom/set-build-command "./gradlew %s" "build.gradle")))
+    (android-mode +1)))
 
 ;;;###autoload
 (defun +java-current-package ()

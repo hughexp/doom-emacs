@@ -19,47 +19,76 @@ to the right fringe.")
 ;;
 ;; Packages
 
-(def-package! git-gutter
-  :commands (git-gutter:revert-hunk git-gutter:stage-hunk)
+(use-package! git-gutter
+  :commands git-gutter:revert-hunk git-gutter:stage-hunk
   :init
-  (defun +version-control|git-gutter-maybe ()
-    "Enable `git-gutter-mode' in non-remote buffers."
-    (when (and buffer-file-name
-               (or +vc-gutter-in-remote-files
-                   (not (file-remote-p buffer-file-name)))
-               (vc-backend buffer-file-name))
-      (if (display-graphic-p)
-          (progn
-            (require 'git-gutter-fringe)
-            (setq-local git-gutter:init-function      #'git-gutter-fr:init)
-            (setq-local git-gutter:view-diff-function #'git-gutter-fr:view-diff-infos)
-            (setq-local git-gutter:clear-function     #'git-gutter-fr:clear)
-            (setq-local git-gutter:window-width -1))
-        (setq-local git-gutter:init-function      'nil)
-        (setq-local git-gutter:view-diff-function #'git-gutter:view-diff-infos)
-        (setq-local git-gutter:clear-function     #'git-gutter:clear-diff-infos)
-        (setq-local git-gutter:window-width 1))
-      (git-gutter-mode +1)))
-  (add-hook! (text-mode prog-mode conf-mode after-save)
-    #'+version-control|git-gutter-maybe)
+  (add-hook! 'find-file-hook
+    (defun +vc-gutter-init-maybe-h ()
+      "Enable `git-gutter-mode' in the current buffer.
+
+If the buffer doesn't represent an existing file, `git-gutter-mode's activation
+is deferred until the file is saved. Respects `git-gutter:disabled-modes'."
+      (when (or +vc-gutter-in-remote-files
+                (not (file-remote-p (or buffer-file-name default-directory))))
+        (if (not buffer-file-name)
+            (add-hook 'after-save-hook #'+vc-gutter-init-maybe-h nil 'local)
+          (when (and (vc-backend buffer-file-name)
+                     (progn
+                       (require 'git-gutter)
+                       (not (memq major-mode git-gutter:disabled-modes))))
+            (if (and (display-graphic-p)
+                     (require 'git-gutter-fringe nil t))
+                (progn
+                  (setq-local git-gutter:init-function      #'git-gutter-fr:init)
+                  (setq-local git-gutter:view-diff-function #'git-gutter-fr:view-diff-infos)
+                  (setq-local git-gutter:clear-function     #'git-gutter-fr:clear)
+                  (setq-local git-gutter:window-width -1))
+              (setq-local git-gutter:init-function      'nil)
+              (setq-local git-gutter:view-diff-function #'git-gutter:view-diff-infos)
+              (setq-local git-gutter:clear-function     #'git-gutter:clear-diff-infos)
+              (setq-local git-gutter:window-width 1))
+            (git-gutter-mode +1)
+            (remove-hook 'after-save-hook #'+vc-gutter-init-maybe-h 'local))))))
+
+  ;; Disable in Org mode, as per
+  ;; <https://github.com/syl20bnr/spacemacs/issues/10555> and
+  ;; <https://github.com/syohex/emacs-git-gutter/issues/24>. Apparently, the
+  ;; mode-enabling function for global minor modes gets called for new buffers
+  ;; while they are still in `fundamental-mode', before a major mode has been
+  ;; assigned. I don't know why this is the case, but adding `fundamental-mode'
+  ;; here fixes the issue.
+  (setq git-gutter:disabled-modes '(fundamental-mode image-mode pdf-view-mode))
+
   ;; standardize default fringe width
   (if (fboundp 'fringe-mode) (fringe-mode '4))
   :config
-  (set-popup-rule! "^\\*git-gutter" :select nil)
+  (set-popup-rule! "^\\*git-gutter" :select nil :size '+popup-shrink-to-fit)
 
   ;; Update git-gutter on focus (in case I was using git externally)
   (add-hook 'focus-in-hook #'git-gutter:update-all-windows)
 
-  (defun +version-control|update-git-gutter (&rest _)
-    "Refresh git-gutter on ESC. Return nil to prevent shadowing other
+  (add-hook! '(doom-escape-hook doom-switch-window-hook) :append
+    (defun +vc-gutter-update-h (&rest _)
+      "Refresh git-gutter on ESC. Return nil to prevent shadowing other
 `doom-escape-hook' hooks."
-    (when git-gutter-mode
-      (ignore (git-gutter))))
-  (add-hook 'doom-escape-hook #'+version-control|update-git-gutter t)
-
+      (when (and git-gutter-mode
+                 (not (memq this-command '(git-gutter:stage-hunk
+                                           git-gutter:revert-hunk))))
+        (ignore (git-gutter)))))
   ;; update git-gutter when using magit commands
-  (advice-add #'magit-stage-file   :after #'+version-control|update-git-gutter)
-  (advice-add #'magit-unstage-file :after #'+version-control|update-git-gutter))
+  (advice-add #'magit-stage-file   :after #'+vc-gutter-update-h)
+  (advice-add #'magit-unstage-file :after #'+vc-gutter-update-h)
+
+  (defadvice! +vc-gutter--fix-linearity-of-hunks-a (diffinfos is-reverse)
+    "Fixes `git-gutter:next-hunk' and `git-gutter:previous-hunk' sometimes
+  jumping to random hunks."
+    :override #'git-gutter:search-near-diff-index
+    (cl-position-if (let ((lineno (line-number-at-pos)))
+                      (lambda (line)
+                        (funcall (if is-reverse #'> #'<) lineno line)))
+                    diffinfos
+                    :key #'git-gutter-hunk-start-line
+                    :from-end is-reverse)))
 
 
 ;; subtle diff indicators in the fringe
@@ -80,70 +109,3 @@ to the right fringe.")
       ;; A non-descript, left-pointing arrow
       (define-fringe-bitmap 'flycheck-fringe-bitmap-double-arrow
         [16 48 112 240 112 48 16] nil nil 'center))))
-
-
-;; (def-package! diff-hl
-;;   :defer t
-;;   :init
-;;   (defun +vc-gutter|init ()
-;;     "Start `diff-hl-mode' if in a file-visiting and tracked buffer."
-;;     (when (and buffer-file-name
-;;                (vc-state buffer-file-name)
-;;                (or +vc-gutter-in-remote-files
-;;                    (not (file-remote-p buffer-file-name))))
-;;       (diff-hl-mode +1)))
-;;   (add-hook! (text-mode prog-mode conf-mode after-save)
-;;     #'+vc-gutter|init)
-;;   ;; standardize fringe size
-;;   (if (fboundp 'fringe-mode) (fringe-mode '4))
-;;   :config
-;;   (setq vc-git-diff-switches '("--histogram"))
-;;   ;; Update diffs when it makes sense too, without being too slow
-;;   (if (not +vc-gutter-diff-unsaved-buffer)
-;;       (add-hook! '(doom-escape-hook focus-in-hook) #'diff-hl-update)
-;;     (diff-hl-flydiff-mode +1)
-;;     (add-hook! '(doom-escape-hook focus-in-hook) #'diff-hl-flydiff-update)
-;;     (when (featurep! :feature evil)
-;;       (when diff-hl-flydiff-timer
-;;         (cancel-timer diff-hl-flydiff-timer))
-;;       (add-hook 'evil-insert-state-exit-hook #'diff-hl-flydiff-update)))
-;;   ;; Don't delete the current hunk's indicators while we're editing
-;;   (advice-remove #'diff-hl-overlay-modified #'ignore)
-;;   ;; Update diff-hl when magit refreshes
-;;   (add-hook 'magit-post-refresh-hook 'diff-hl-magit-post-refresh)
-;;   ;; update git-gutter when using these commands
-;;   (advice-add #'magit-stage :after #'+version-control|update-git-gutter)
-;;   (advice-add #'magit-unstage :after #'+version-control|update-git-gutter)
-;;   (advice-add #'magit-stage-file :after #'+version-control|update-git-gutter)
-;;   (advice-add #'magit-unstage-file :after #'+version-control|update-git-gutter)
-;;   ;; Draw me like one of your French editors
-;;   (setq-default fringes-outside-margins t)
-;;   (cond ((or +vc-gutter-in-margin (not (display-graphic-p)))
-;;          (diff-hl-margin-mode)
-;;          (setq diff-hl-margin-symbols-alist
-;;                '((insert . "❙") (delete . "^") (change . "❙")
-;;                  (unknown . "❙") (ignored . "❙"))))
-;;         (t
-;;          ;; Because diff-hl is in the left fringe
-;;          (setq flycheck-indication-mode 'right-fringe)
-;;          (defun +vc-gutter|setup-fringe-bitmaps ()
-;;            "Define thin fringe bitmaps for maximum sexiness."
-;;            (define-fringe-bitmap 'diff-hl-bmp-top [224] nil nil '(center repeated))
-;;            (define-fringe-bitmap 'diff-hl-bmp-middle [224] nil nil '(center repeated))
-;;            (define-fringe-bitmap 'diff-hl-bmp-bottom [224] nil nil '(center repeated))
-;;            (define-fringe-bitmap 'diff-hl-bmp-insert [224] nil nil '(center repeated))
-;;            (define-fringe-bitmap 'diff-hl-bmp-single [224] nil nil '(center repeated))
-;;            (define-fringe-bitmap 'diff-hl-bmp-delete [240 224 192 128] nil nil 'top))
-;;          (defun +vc-gutter-type-at-pos (type _pos)
-;;            "Return the bitmap for `diff-hl' to use for change at point."
-;;            (pcase type
-;;              (`unknown 'question-mark)
-;;              (`delete  'diff-hl-bmp-delete)
-;;              (`change  'diff-hl-bmp-middle)
-;;              (`ignored 'diff-hl-bmp-i)
-;;              (x (intern (format "diff-hl-bmp-%s" x)))))
-;;          ;; Tweak the fringe bitmaps so we get long, elegant bars
-;;          (setq diff-hl-fringe-bmp-function #'+vc-gutter-type-at-pos
-;;                diff-hl-draw-borders nil)
-;;          (add-hook 'diff-hl-mode-hook #'+vc-gutter|setup-fringe-bitmaps))))
-

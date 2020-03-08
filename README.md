@@ -1,57 +1,54 @@
-<img src="https://raw.githubusercontent.com/hlissner/doom-emacs/screenshots/main.png" alt="Main screenshot" />
+<a href="http://doomemacs.org">
+  <img src="https://img.shields.io/github/tag/hlissner/doom-emacs.svg?label=release&color=orange"  alt="Made with Doom Emacs">
+</a>
+<a href="https://emacs.org">
+  <img src="https://img.shields.io/badge/Made_for-Emacs_26.1+-blueviolet.svg" alt="Made for Emacs 26.1+">
+</a>
+<a href="https://github.com/hlissner/doom-emacs/actions">
+  <img src="https://github.com/hlissner/doom-emacs/workflows/CI/badge.svg" alt="Build status: develop">
+</a>
+<a href="https://discord.gg/qvGgnVx">
+  <img src="https://img.shields.io/badge/Discord-blue.svg?logo=discord&label=join" alt="Join our discord server" align="right">
+</a>
+<br><br>
 
-<img src="https://img.shields.io/github/tag/hlissner/doom-emacs.svg?label=release"
-     alt="Current release"
-     align="left" />
-<a href="https://travis-ci.org/hlissner/doom-emacs">
-  <img src="https://img.shields.io/travis/hlissner/doom-emacs/master.svg?label=master"
-       alt="build status (master)"
-       align="left" />
-</a>
-<a href="https://travis-ci.org/hlissner/doom-emacs">
-  <img src="https://img.shields.io/travis/hlissner/doom-emacs/master.svg?label=develop"
-       alt="build status (develop)"
-       align="left" />
-</a>
-<a href="https://discord.gg/bcZ6P3y">
-  <img src="https://img.shields.io/badge/Discord-blue.svg?logo=discord"
-       alt="Discord Server"
-       align="left" />
-</a>
+![Doom Emacs Screenshot](https://raw.githubusercontent.com/hlissner/doom-emacs/screenshots/main.png)
 
 <p align="center">
-  <a href="/../../wiki">wiki</a>&nbsp; |&nbsp;
-  <a href="/../../tree/screenshots">screenshots</a>&nbsp; |&nbsp;
-  <a href="/../../faq.org">faq</a>&nbsp; |&nbsp;
-  <a href="/../../wiki/FAQ#troubleshooting">troubleshooting</a>
-  <!--a href="CHANGELOG.org">changelog</a-->
+  <b><a href="/../../tree/screenshots">Screenshots</a></b>
+  |
+  <b><a href="docs/getting_started.org">Get started</a></b>
+  |
+  <b><a href="docs/contributing.org">Contribute</a></b>
+  |
+  <b><a href="docs/index.org">Documentation</a></b>
+  |
+  <b><a href="docs/faq.org">FAQ</a></b>
 </p>
 
-- - -
+---
 
-Quick start
------------
+**Quick start**
 
 ```bash
 git clone https://github.com/hlissner/doom-emacs ~/.emacs.d
-~/.emacs.d/bin/doom quickstart
+~/.emacs.d/bin/doom install
 ```
 
-> Doom supports Emacs 25.3 and newer, but **Emacs 26.1 is recommended.** Doom
-> works best on Linux & MacOS. Your mileage may vary on Windows.
+More details, including dependencies and how to install Emacs, can be found [in
+the documentation](docs/getting_started.org#install).
 
+**Table of Contents**
 
-Table of Contents
-==================
 - [What is Doom Emacs](#what-is-doom-emacs)
     - [Doom's mantras](#dooms-mantras)
-    - [Feature highlights](#feature-highlights)
+    - [Features](#features)
 - [Getting Help](#getting-help)
-- [Contributing](#contributing)
+    - [Community](#community)
+    - [Troubleshooting](#troubleshooting)
+    - [Contributing](#contributing)
 
-
-What is Doom Emacs
-==================
+# What is Doom Emacs
 
 <a href="http://ultravioletbat.deviantart.com/art/Yay-Evil-111710573">
   <img src="https://github.com/hlissner/doom-emacs/raw/screenshots/cacochan.png" align="right" />
@@ -61,96 +58,98 @@ It is a story as old as time. A stubborn, shell-dwelling, and melodramatic
 vimmer -- envious of the features of modern text editors -- spirals into despair
 before succumbing to the [dark side][url:evil-mode]. This is his config.
 
-Doom is a configuration for [GNU Emacs](https://www.gnu.org/software/emacs/). It
-can be used as framework for your own configuration, or as a resource for fellow
-Emacs enthusiasts who want to learn more about our favorite OS.
+Doom is a configuration framework for [GNU
+Emacs](https://www.gnu.org/software/emacs/) tailored for Emacs bankruptcy
+veterans who want less framework in their frameworks and the performance of a
+hand rolled config (or better). It can be a foundation for your own config or a
+resource for Emacs enthusiasts to learn more about our favorite OS.
 
-Doom's mantras
---------------
-- **Gotta go fast.** Startup and runtime speed are high priorities; many
-  expensive, heavy-handed features and packages have been fine-tuned to that
-  end.
-- **Hacker-friendly.** Doom caters to the command line denizen unafraid of
-  writing a little (or a lot of) code to tailor their editor. It also inherits
-  your shell configuration, warts 'n all, and expects frequent trips into the
-  terminal to manage Doom with its `bin/doom` utility.
-- **Opinionated, but not stubborn.** Doom has _many_ opinions spread out across
-  its 120+ modules designed to iron out idiosynchrosies and provide a better and
-  more consistent baseline experience of Emacs and its plugins. However, they
-  mustn't ever compromise your ability to change, rewrite or disable any or all
-  of it, if you ask nicely.
-- **Written to be read.** Doom's source ought to be self documenting and easy to
-  grok. Modules should be syntactically sweet and concise, and backend logic
-  should be explicit and abstraction-light. Where complexity arises, comments
-  and documentation shouldn't be far away.
+## Doom's mantras
 
-Feature Highlights
-------------------
-- A declarative [package management system][doom:packages] with a command line
-  interface that combines package.el, [use-package] and [quelpa], allowing you
-  to install packages from anywhere.
-- A [popup management system][doom:popups] with customizable rules to dictate
-  how temporary/disposable buffers are displayed.
-- A vim-centric (and optional) experience with [evil-mode][url:evil-mode],
-  including ports of several popular vim plugins, <kbd>C-x</kbd> omnicompletion
-  and a slew of [custom ex commands][doom:commands].
+- **Gotta go fast.** Startup and run-time performance are priorities. Doom goes
+  beyond lazy loading packages by modifying them to be snappier and load lazier!
+- **Close to metal.** There's less between you and vanilla Emacs by design.
+  There's less to grok, on top of Emacs.
+- **Readability counts.** Internals ought to be written as if reading them were
+  part of the user experience, and it is! Modules should be syntactically sweet.
+  Backend logic should be functional (as much as elisp permits), abstraction
+  light and (hopefully) documented.
+- **Opinionated, but not stubborn.** Doom is a bundle of reasonable defaults and
+  curated opinions, but all of it should be optional. Use as little or as much
+  of it as you like.
+- **Your system, your rules.** There are more ways to set up your development
+  environment than there are dislikes on Youtube Rewind '18, so Doom leaves it
+  to you. Doom will not *automatically* install system dependencies (and will
+  coerce its plugins not to do so either). Use `doom doctor` to figure out
+  what's missing.
+
+## Features
+
+- Minimalistic good looks inspired by modern editors.
+- A modular architecture for a more organized Emacs configuration.
+- A custom elisp library to help simplify your config.
+- (Optional) Vim-emulation powered by [evil-mode][url:evil-mode], including
+  ports of popular vim plugins and functionality.
+- A declarative [package management system][doom:packages] (powered by
+  [straight.el][url:straight]) with a command line interface. Install packages
+  from anywhere, not just (M)ELPA.
+- A curated set of sane defaults for all packages, all (major) OSes, and Emacs
+  itself.
+- Support for *many* programming languages. Too many to list. Includes syntax
+  highlighting, linters/checker integration, inline code evaluation, code
+  completion (where possible), REPLs, documentation lookups, snippets, and more!
+- Support for *many* tools, like docker, pass, ansible, terraform, and more.
 - A Spacemacs-esque [keybinding scheme][doom:bindings], centered around leader
   and localleader prefix keys (<kbd>SPC</kbd> and <kbd>SPC</kbd><kbd>m</kbd>, by
   default).
-- Indentation detection and optional integration with
-  [editorconfig][url:editorconfig]. Let someone else argue about tabs vs
-  ___***spaces***___.
-- Code completion for many languages, powered by
-  [company-mode][url:company-mode] (some may have external dependencies).
-- Project-awareness powered by [projectile][url:projectile], with tools and an
-  API to navigate and manage projects, as well as project/framework-specific
-  minor modes and snippets libraries (and the ability to define your own).
-- Project search (and replace) utilities, powered by
-  [the_silver_searcher][url:ag], [ripgrep][url:rg], git-grep and
-  [wgrep][url:wgrep], with integration for [ivy][url:ivy] (the default) and
-  [helm][url:helm].
-- Isolated and persistent workspaces powered by [persp-mode][url:persp-mode].
-  Also substitutes as vim tabs.
-- Inline/live code evaluation (using [quickrun][url:quickrun]), with REPL
-  support for a variety of languages.
-- A jump-to-definition/references implementation for all languages that tries to
-  "just work," resorting to mode-specific functionality, before falling back on
-  [dump-jump][url:dumb-jump].
+- A rule-based [popup management system][doom:popups] that dictates how
+  temporary or disposable buffers are displayed (and disposed of).
+- Automatic indentation detection and [editorconfig][url:editorconfig]
+  integration. Let someone else argue about tabs vs **\_\***spaces**\*\_**.
+- Project-management tools and framework-specific minor modes with their own
+  snippets libraries.
+- Project search (and replace) utilities, powered by [ripgrep][url:ripgrep].
+- Isolated and persistent workspaces (also substitutes for vim tabs).
+- An envvar file generator that captures a snapshot of your shell environment
+  for Doom to load at startup. No more struggling to get Emacs to inherit your
+  `PATH`, among other things.
 
+# Getting Help
 
-Troubleshooting
-===============
+## Community
+
+We have [a Discord server][url:discord]! Hop on and say hi!
+
+## Troubleshooting
 
 Encountered strange behavior or an error? Here are some things to try before you
 shoot off that bug report:
 
-- Run `bin/doom refresh`. This ensures Doom is properly set up and its autoloads
+- Run `bin/doom sync`. This ensures Doom is properly set up and its autoloads
   files are up-to-date.
 - If you have byte-compiled your config (with `bin/doom compile`), see if
-  `bin/doom clean` makes your issue go away. Never debug issues with a
-  byte-compiled config, it will only make your job harder.
+  `bin/doom clean` makes the issue go away. Never debug issues with a
+  byte-compiled config, it will make your job harder.
 - Run `bin/doom doctor` to detect common issues in your development environment.
 - Search Doom's issue tracker for mention of any error messages you've received.
 - [Visit our FAQ][docs:faq] to see if your issue is listed.
 
 If all else fails, [file that bug report][github:new-issue]! Please include the
-behavior you've observed, the behavior you expected, and any error message in
-the \*Messages\* buffer (can be opened with <kbd>SPC h m</kbd> or `M-x
-view-echo-area-messages`). It'd be a great help if you included a backtrace with
-them as well.
+behavior you've observed, the behavior you expected, and any error messages or
+warnings logged to the \*Messages\* buffer (can be opened with <kbd>SPC h
+e</kbd> or `M-x view-echo-area-messages`).
 
-We've also got [a Discord server][url:discord]. Hop on! We can help!
+It's a great help if you included a backtrace with errors, i.e. `M-x
+toggle-debug-on-error` then recreating the error(s).
 
-
-Contributing
-============
+## Contributing
 
 Doom (and my Emacs work in general) is a labor of love and incurable madness,
-done on my spare time. If you'd like to support my work, I welcome
-contributions:
+done on my spare time. If you'd like to support my work, there are many things
+you can do to help; I welcome any contribution!
 
 - I love pull requests and bug reports. Check out the [Contributing
-  Guidelines][docs:contributing] (WIP) to find out how you can help out.
+  Guidelines][docs:contributing] to find out how you can help out.
 - I welcome Elisp pointers! Don't hesitate to [tell me my Elisp-fu
   sucks][github:new-issue] (but please tell me why).
 - Hop on [our Discord server][url:discord] and say hi! Help others out, hang out
@@ -159,39 +158,23 @@ contributions:
   soul!
 - If you'd like to support my work financially, consider buying me a drink
   through [liberapay][url:liberapay] or [paypal][url:paypal]. Donations are a
-  great help. My work here contends with full-time studies, my ventures in indie
-  gamedev, and my freelance work.
+  great help. My work here contends with studies, ventures in indie gamedev, and
+  my freelance work.
 
-
-<!-- [docs:wiki]: docs/index.org -->
-<!-- [docs:wiki-quickstart]: docs/getting-started.org -->
-<!-- [docs:wiki-modules]: docs/modules.org -->
-<!-- [docs:wiki-customization]: docs/customize.org -->
-<!-- [docs:contributing]: docs/contribute.org -->
-<!-- [docs:faq]: docs/faq.org -->
-[docs:faq]: /../../wiki/FAQ
-
+[docs:wiki]: docs/index.org
+[docs:wiki-quickstart]: docs/getting_started.org
+[docs:wiki-modules]: docs/index.org#Module%20List
+[docs:wiki-customization]: docs/getting_started.org#Customize
+[docs:contributing]: docs/contributing.org
+[docs:faq]: docs/faq.org
 [github:new-issue]: https://github.com/hlissner/doom-emacs/issues/new
-[doom:bindings]: modules/config/default/+bindings.el
-[doom:commands]: modules/config/default/+evil-commands.el
+[doom:bindings]: modules/config/default/+evil-bindings.el
 [doom:packages]: core/autoload/packages.el
-[doom:popups]: modules/feature/popup/README.org
-
-[url:discord]: https://discord.gg/bcZ6P3y
+[doom:popups]: modules/ui/popup/README.org
+[url:discord]: https://discord.gg/qvGgnVx
 [url:liberapay]: https://liberapay.com/hlissner/donate
 [url:paypal]: https://paypal.me/henriklissner/10
-
-[url:company-mode]: https://github.com/company-mode/company-mode
-[url:doom-themes]: https://github.com/hlissner/emacs-doom-themes
 [url:editorconfig]: http://editorconfig.org/
 [url:evil-mode]: https://github.com/emacs-evil/evil
-[url:helm]: https://github.com/emacs-helm/helm
-[url:ivy]: https://github.com/abo-abo/swiper
-[url:persp-mode]: https://github.com/Bad-ptr/persp-mode.el
-[url:projectile]: https://github.com/bbatsov/projectile
-[url:quelpa]: https://github.com/quelpa/quelpa
-[url:quickrun]: https://github.com/syohex/emacs-quickrun
 [url:ripgrep]: https://github.com/BurntSushi/ripgrep
-[url:the_silver_searcher]: https://github.com/ggreer/the_silver_searcher
-[url:use-package]: https://github.com/jwiegley/use-package
-[url:wgrep]: https://github.com/mhayashi1120/Emacs-wgrep
+[url:straight]: https://github.com/raxod502/straight.el

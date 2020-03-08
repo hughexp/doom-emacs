@@ -4,17 +4,18 @@
 #+STARTUP: inlineimages
 
 * Table of Contents :TOC_3:noexport:
-- [[Description][Description]]
-  - [[Module Flags][Module Flags]]
-  - [[Plugins][Plugins]]
-- [[Prerequisites][Prerequisites]]
-  - [[irony-server][irony-server]]
-    - [[MacOS][MacOS]]
-    - [[Arch Linux][Arch Linux]]
-  - [[rtags][rtags]]
-- [[Configure][Configure]]
-  - [[Project compile settings][Project compile settings]]
-    - [[Known issues with bear on macOS][Known issues with bear on macOS]]
+- [[#description][Description]]
+  - [[#module-flags][Module Flags]]
+  - [[#plugins][Plugins]]
+- [[#prerequisites][Prerequisites]]
+  - [[#irony-server][irony-server]]
+    - [[#macos][MacOS]]
+    - [[#arch-linux][Arch Linux]]
+    - [[#opensuse][openSUSE]]
+  - [[#rtags][rtags]]
+- [[#configure][Configure]]
+  - [[#project-compile-settings][Project compile settings]]
+    - [[#known-issues-with-bear-on-macos][Known issues with bear on macOS]]
 
 * Description
 This module adds support for the C-family of languages: C, C++, and Objective-C.
@@ -23,15 +24,13 @@ This module adds support for the C-family of languages: C, C++, and Objective-C.
 + eldoc support (~irony-eldoc~)
 + Syntax-checking (~flycheck-irony~)
 + Code navigation (~rtags~)
-+ File Templates ([[../../feature/file-templates/templates/c-mode][c-mode]], [[../../feature/file-templates/templates/c++-mode][c++-mode]])
-+ Snippets ([[https://github.com/hlissner/emacs-snippets/tree/master/cc-mode][cc-mode]], [[https://github.com/hlissner/emacs-snippets/tree/master/c-mode][c-mode]], [[https://github.com/hlissner/emacs-snippets/tree/master/c++-mode][c++-mode]])
++ File Templates ([[../../editor/file-templates/templates/c-mode][c-mode]], [[../../editor/file-templates/templates/c++-mode][c++-mode]])
++ Snippets ([[https://github.com/hlissner/doom-snippets/tree/master/cc-mode][cc-mode]], [[https://github.com/hlissner/doom-snippets/tree/master/c-mode][c-mode]], [[https://github.com/hlissner/doom-snippets/tree/master/c++-mode][c++-mode]])
 + Several improvements to C++11 indentation and syntax highlighting.
 
 ** Module Flags
-+ ~+irony~ Enable Irony as a backend for code completion, syntax checking, and
-  eldoc support. This must be disabled to use LSP or another backend.
-+ ~+rtags~ Enable rtags integration. A daemon will be spawned the first time you
-  open a C/C++/ObjC buffer, if one hasn't already.
++ ~+lsp~ Disables irony+rtags and replaces them with LSP (ccls by default). This
+  requires the =:tools lsp= module.
 
 ** Plugins
 + [[https://github.com/Kitware/CMake][cmake-mode]]
@@ -41,20 +40,24 @@ This module adds support for the C-family of languages: C, C++, and Objective-C.
 + [[https://github.com/ludwigpacifici/modern-cpp-font-lock][modern-cpp-font-lock]]
 + [[https://github.com/salmanebah/opencl-mode][opencl-mode]]
 + [[https://github.com/jimhourihan/glsl-mode][glsl-mode]]*
-+ [[https://github.com/guidoschmidt/company-glsl][gompany-glsl]]*
-+ [[https://github.com/Sarcasm/irony-mode][irony]]*
-+ [[https://github.com/ikirill/irony-eldoc][irony-eldoc]]*
-+ [[https://github.com/Sarcasm/flycheck-irony][flycheck-irony]]*
-+ [[https://github.com/Sarcasm/company-irony][company-irony]]*
-+ [[https://github.com/hotpxl/company-irony-c-headers][company-irony-c-headers]]*
-+ [[https://github.com/Andersbakken/rtags][rtags]]*
-+ [[https://github.com/Andersbakken/rtags][ivy-rtags]] or [[https://github.com/Andersbakken/rtags][helm-rtags]]*
++ [[https://github.com/guidoschmidt/company-glsl][company-glsl]]*
++ =+lsp=
+  + [[https://github.com/MaskRay/emacs-ccls][ccls]]
++ =-lsp=
+  + [[https://github.com/Sarcasm/irony-mode][irony]]
+  + [[https://github.com/ikirill/irony-eldoc][irony-eldoc]]
+  + [[https://github.com/Sarcasm/flycheck-irony][flycheck-irony]]
+  + [[https://github.com/Sarcasm/company-irony][company-irony]]
+  + [[https://github.com/hotpxl/company-irony-c-headers][company-irony-c-headers]]
+  + [[https://github.com/Andersbakken/rtags][rtags]]
+  + [[https://github.com/Andersbakken/rtags][ivy-rtags]]
+  + [[https://github.com/Andersbakken/rtags][helm-rtags]]
 
 * Prerequisites
 This module requires
 
-+ irony-server (if ~+irony~ is enabled)
-+ rtags (if ~+rtags~ is enabled)
++ irony-server
++ rtags
 
 ** irony-server
 Irony powers the code completion, eldoc and syntax checking systems.
@@ -72,8 +75,9 @@ git clone https://github.com/Sarcasm/irony-mode irony-mode
 mkdir irony-mode/server/build
 pushd irony-mode/server/build
 
-DEST="$HOME/.emacs.d/.local/$(hostname)/etc/irony-server/"
-cmake -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=ON \
+DEST="$HOME/.emacs.d/.local/etc/irony-server/"
+cmake -DCMAKE_PREFIX_PATH=/usr/local/opt/llvm \
+      -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=ON \
       -DCMAKE_INSTALL_PREFIX="$DEST" ../
 cmake --build . --use-stderr --config Release --target install
 
@@ -89,6 +93,11 @@ rm -rf irony-mode
 *** Arch Linux
 #+BEGIN_SRC sh
 pacman -S clang cmake
+#+END_SRC
+
+*** openSUSE
+#+BEGIN_SRC sh :dir /sudo::
+sudo zypper install clang cmake
 #+END_SRC
 
 ** rtags

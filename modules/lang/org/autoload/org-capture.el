@@ -1,10 +1,10 @@
 ;;; lang/org/autoload/org-capture.el -*- lexical-binding: t; -*-
-;;;###if (featurep! +capture)
 
 (defvar org-capture-initial)
 
+
 ;;
-;; External frame
+;;; External frame
 
 ;;;###autoload
 (defvar +org-capture-frame-parameters
@@ -12,11 +12,12 @@
     (width . 70)
     (height . 25)
     (transient . t)
-    ,(if IS-LINUX '(display . ":0")))
+    ,(if IS-LINUX '(display . ":0"))
+    ,(if IS-MAC '(menu-bar-lines . 1)))
   "TODO")
 
 ;;;###autoload
-(defun +org-capture|cleanup-frame ()
+(defun +org-capture-cleanup-frame-h ()
   "Closes the org-capture frame once done adding an entry."
   (when (+org-capture-frame-p)
     (delete-frame nil t)))
@@ -29,26 +30,26 @@
        (frame-parameter nil 'transient)))
 
 ;;;###autoload
-(defun +org-capture/open-frame (&optional string key)
+(defun +org-capture/open-frame (&optional initial-input key)
   "Opens the org-capture window in a floating frame that cleans itself up once
 you're done. This can be called from an external shell script."
   (interactive)
-  (when (and string (string-empty-p string))
-    (setq string nil))
+  (when (and initial-input (string-empty-p initial-input))
+    (setq initial-input nil))
   (when (and key (string-empty-p key))
     (setq key nil))
   (let* ((frame-title-format "")
          (frame (if (+org-capture-frame-p)
                     (selected-frame)
-                  (let (before-make-frame-hook after-make-frame-functions)
-                    (make-frame +org-capture-frame-parameters)))))
+                  (make-frame +org-capture-frame-parameters))))
+    (select-frame-set-input-focus frame)  ; fix MacOS not focusing new frames
     (with-selected-frame frame
       (require 'org-capture)
       (condition-case ex
           (cl-letf (((symbol-function #'pop-to-buffer)
                      (symbol-function #'switch-to-buffer)))
             (switch-to-buffer (doom-fallback-buffer))
-            (let ((org-capture-initial string)
+            (let ((org-capture-initial initial-input)
                   org-capture-entry)
               (when (and key (not (string-empty-p key)))
                 (setq org-capture-entry (org-capture-select-template key)))
@@ -57,11 +58,10 @@ you're done. This can be called from an external shell script."
                   (org-capture)
                 (unwind-protect
                     (counsel-org-capture)
-                  (if-let* ((buf (cl-loop for buf in (buffer-list)
-                                          if (buffer-local-value 'org-capture-mode buf)
-                                          return buf)))
+                  (if-let (buf (cl-find-if (doom-partial #'buffer-local-value 'org-capture-mode)
+                                           (buffer-list)))
                       (with-current-buffer buf
-                        (add-hook 'kill-buffer-hook #'+org-capture|cleanup-frame nil t))
+                        (add-hook 'kill-buffer-hook #'+org-capture-cleanup-frame-h nil t))
                     (delete-frame frame))))))
         ('error
          (message "org-capture: %s" (error-message-string ex))
@@ -74,9 +74,21 @@ you're done. This can be called from an external shell script."
 
 
 ;;
-;; Capture targets
+;;; Capture targets
 
-(defun +org--capture-root (path)
+;;;###autoload
+(defun +org-capture-todo-file ()
+  "Expand `+org-capture-todo-file' from `org-directory'.
+If it is an absolute path return `+org-capture-todo-file' verbatim."
+  (expand-file-name +org-capture-todo-file org-directory))
+
+;;;###autoload
+(defun +org-capture-notes-file ()
+  "Expand `+org-capture-notes-file' from `org-directory'.
+If it is an absolute path return `+org-capture-todo-file' verbatim."
+  (expand-file-name +org-capture-notes-file org-directory))
+
+(defun +org--capture-local-root (path)
   (let ((filename (file-name-nondirectory path)))
     (expand-file-name
      filename
@@ -89,17 +101,64 @@ you're done. This can be called from an external shell script."
 (defun +org-capture-project-todo-file ()
   "Find the nearest `+org-capture-todo-file' in a parent directory, otherwise,
 opens a blank one at the project root. Throws an error if not in a project."
-  (+org--capture-root +org-capture-todo-file))
+  (+org--capture-local-root +org-capture-todo-file))
 
 ;;;###autoload
 (defun +org-capture-project-notes-file ()
   "Find the nearest `+org-capture-notes-file' in a parent directory, otherwise,
 opens a blank one at the project root. Throws an error if not in a project."
-  (+org--capture-root +org-capture-notes-file))
+  (+org--capture-local-root +org-capture-notes-file))
 
 ;;;###autoload
 (defun +org-capture-project-changelog-file ()
   "Find the nearest `+org-capture-changelog-file' in a parent directory,
 otherwise, opens a blank one at the project root. Throws an error if not in a
 project."
-  (+org--capture-root +org-capture-changelog-file))
+  (+org--capture-local-root +org-capture-changelog-file))
+
+(defun +org--capture-ensure-heading (headings &optional initial-level)
+  (if (not headings)
+      (widen)
+    (let ((initial-level (or initial-level 1)))
+      (if (and (re-search-forward (format org-complex-heading-regexp-format
+                                          (regexp-quote (car headings)))
+                                  nil t)
+               (= (org-current-level) initial-level))
+          (progn
+            (beginning-of-line)
+            (org-narrow-to-subtree))
+        (goto-char (point-max))
+        (unless (and (bolp) (eolp)) (insert "\n"))
+        (insert (make-string initial-level ?*)
+                " " (car headings) "\n")
+        (beginning-of-line 0))
+      (+org--capture-ensure-heading (cdr headings) (1+ initial-level)))))
+
+(defun +org--capture-central-file (file project)
+  (let ((file (expand-file-name file org-directory)))
+    (set-buffer (org-capture-target-buffer file))
+    (org-capture-put-target-region-and-position)
+    (widen)
+    (goto-char (point-min))
+    ;; Find or create the project headling
+    (+org--capture-ensure-heading
+     (append (org-capture-get :parents)
+             (list project (org-capture-get :heading))))))
+
+;;;###autoload
+(defun +org-capture-central-project-todo-file ()
+  "TODO"
+  (+org--capture-central-file
+   +org-capture-projects-file (projectile-project-name)))
+
+;;;###autoload
+(defun +org-capture-central-project-notes-file ()
+  "TODO"
+  (+org--capture-central-file
+   +org-capture-projects-file (projectile-project-name)))
+
+;;;###autoload
+(defun +org-capture-central-project-changelog-file ()
+  "TODO"
+  (+org--capture-central-file
+   +org-capture-projects-file (projectile-project-name)))

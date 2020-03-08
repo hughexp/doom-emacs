@@ -1,370 +1,244 @@
 ;;; core/cli/autoloads.el -*- lexical-binding: t; -*-
 
-(dispatcher! (autoloads a) (doom-reload-autoloads nil 'force)
-  "Regenerates Doom's autoloads file.
+(defvar doom-autoload-excluded-packages '("gh")
+  "What packages whose autoloads file we won't index.
 
-This file tells Emacs where to find your module's autoloaded functions and
-plugins.")
-
-;; external variables
-(defvar autoload-timestamps)
-(defvar generated-autoload-load-name)
-(defvar generated-autoload-file)
-
-
-;;
-;; Helpers
-
-(defvar doom-autoload-excluded-packages '(marshal gh)
-  "Packages that have silly or destructive autoload files that try to load
+These packages have silly or destructive autoload files that try to load
 everyone in the universe and their dog, causing errors that make babies cry. No
 one wants that.")
 
-(defun doom-delete-autoloads-file (file)
-  "Delete FILE (an autoloads file), and delete the accompanying *.elc file, if
-it exists."
-  (cl-check-type file string)
-  (when (file-exists-p file)
-    (when-let* ((buf (find-buffer-visiting doom-autoload-file)))
-      (with-current-buffer buf
-        (set-buffer-modified-p nil))
-      (kill-buffer buf))
-    (delete-file file)
-    (ignore-errors (delete-file (byte-compile-dest-file file)))
-    (message "Deleted old %s" (file-name-nondirectory file))))
+(defvar doom-autoload-cached-vars
+  '(load-path
+    auto-mode-alist
+    interpreter-mode-alist
+    Info-directory-list
+    doom-disabled-packages)
+  "A list of variables to be cached in `doom-package-autoload-file'.")
 
-(defun doom--warn-refresh-session ()
-  (print! (bold (green "\nFinished!")))
-  (message "If you have a running Emacs Session, you will need to restart it or")
-  (message "reload Doom for changes to take effect:\n")
-  (when (fboundp '+workspace/restart-emacs-then-restore)
-    (message "  M-x +workspace/restart-emacs-then-restore"))
-  (message "  M-x restart-emacs")
-  (message "  M-x doom/reload"))
+;; externs
+(defvar autoload-timestamps)
+(defvar generated-autoload-load-name)
 
-(defun doom--do-load (&rest files)
-  (if (and noninteractive (not (daemonp)))
-      (add-hook 'kill-emacs-hook #'doom--warn-refresh-session)
-    (dolist (file files)
-      (load-file (byte-compile-dest-file file)))))
+(defun doom-cli-reload-autoloads ()
+  "Reloads `doom-autoload-file' and `doom-package-autoload-file' files."
+  (doom-cli-reload-core-autoloads)
+  (doom-cli-reload-package-autoloads))
 
-(defun doom--byte-compile-file (file)
-  (let ((short-name (file-name-nondirectory file))
-        (byte-compile-dynamic-docstrings t))
-    (condition-case e
+(defun doom-cli-reload-core-autoloads (&optional file)
+  (print! (start "(Re)generating core autoloads..."))
+  (print-group!
+   (let ((file (or file doom-autoload-file))
+         doom-autoload-cached-vars)
+     (cl-check-type file string)
+     (and (print! (start "Generating core autoloads..."))
+          (doom-cli--write-autoloads
+           file (doom-cli--generate-autoloads
+                 (cl-loop for dir
+                          in (append (list doom-core-dir)
+                                     (cdr (doom-module-load-path 'all-p))
+                                     (list doom-private-dir))
+                          if (doom-glob dir "autoload.el") collect it
+                          if (doom-glob dir "autoload/*.el") append it)
+                 'scan))
+          (print! (start "Byte-compiling core autoloads file..."))
+          (doom-cli--byte-compile-file file)
+          (print! (success "Generated %s")
+                  (relpath (byte-compile-dest-file file)
+                           doom-emacs-dir))))))
+
+(defun doom-cli-reload-package-autoloads (&optional file)
+  (print! (start "(Re)generating package autoloads..."))
+  (print-group!
+   (doom-initialize-packages)
+   (let ((file (or file doom-package-autoload-file)))
+     (cl-check-type file string)
+     (and (print! (start "Generating package autoloads..."))
+          (doom-cli--write-autoloads
+           file
+           (doom-cli--generate-var-cache doom-autoload-cached-vars)
+           (doom-cli--generate-autoloads
+            (mapcar #'straight--autoloads-file
+                    (cl-set-difference (hash-table-keys straight--build-cache)
+                                       doom-autoload-excluded-packages
+                                       :test #'string=))))
+          (print! (start "Byte-compiling package autoloads file..."))
+          (doom-cli--byte-compile-file file)
+          (print! (success "Generated %s")
+                  (relpath (byte-compile-dest-file file)
+                           doom-emacs-dir))))))
+
+
+;;
+;;; Helpers
+
+(defun doom-cli--write-autoloads (file &rest forms)
+  (make-directory (file-name-directory file) 'parents)
+  (condition-case-unless-debug e
+      (with-temp-file file
+        (let ((standard-output (current-buffer))
+              (print-quoted t)
+              (print-level nil)
+              (print-length nil))
+          (insert ";; -*- lexical-binding: t; -*-\n"
+                  ";; This file is autogenerated by Doom, DO NOT EDIT IT!!\n")
+          (dolist (form (delq nil forms))
+            (mapc #'print form))
+          t))
+    (error (delete-file file)
+           (signal 'doom-autoload-error (list file e)))))
+
+(defun doom-cli--byte-compile-file (file)
+  (condition-case-unless-debug e
+      (let ((byte-compile-warnings (if doom-debug-mode byte-compile-warnings))
+            (byte-compile-dynamic t)
+            (byte-compile-dynamic-docstrings t))
         (when (byte-compile-file file)
-          ;; Give autoloads file a chance to report error
-          (load (if doom-debug-mode
-                    file
-                  (byte-compile-dest-file file))
-                nil t)
-          (unless noninteractive
-            (message "Finished compiling %s" short-name)))
-      ((debug error)
-       (let ((backup-file (concat file ".bk")))
-         (message "Copied backup to %s" backup-file)
-         (copy-file file backup-file 'overwrite))
-       (doom-delete-autoloads-file file)
-       (signal 'doom-autoload-error (list short-name e))))))
+          (unless doom-interactive-mode
+            (add-hook 'doom-cli-post-success-execute-hook #'doom-cli--warn-refresh-session-h))
+          (load (byte-compile-dest-file file) nil t)))
+    (error
+     (delete-file (byte-compile-dest-file file))
+     (signal 'doom-autoload-error (list file e)))))
 
-(defun doom-reload-autoloads (&optional file force-p)
-  "Reloads FILE (an autoload file), if it needs reloading.
+(defun doom-cli--warn-refresh-session-h ()
+  (print! "Restart or reload Doom Emacs for changes to take effect:")
+  (print-group! (print! "M-x doom/restart-and-restore")
+                (print! "M-x doom/restart")
+                (print! "M-x doom/reload")))
 
-FILE should be one of `doom-autoload-file' or `doom-package-autoload-file'. If
-it is nil, it will try to reload both. If FORCE-P (universal argument) do it
-even if it doesn't need reloading!"
-  (or (null file)
-      (stringp file)
-      (signal 'wrong-type-argument (list 'stringp file)))
-  (if (stringp file)
-      (cond ((file-equal-p file doom-autoload-file)
-             (doom-reload-doom-autoloads force-p))
-            ((file-equal-p file doom-package-autoload-file)
-             (doom-reload-package-autoloads force-p))
-            ((error "Invalid autoloads file: %s" file)))
-    (doom-reload-doom-autoloads force-p)
-    (doom-reload-package-autoloads force-p)))
+(defun doom-cli--generate-var-cache (vars)
+  `((setq ,@(cl-loop for var in vars
+                     append `(,var ',(symbol-value var))))))
 
+(defun doom-cli--filter-form (form &optional expand)
+  (let ((func (car-safe form)))
+    (cond ((memq func '(provide custom-autoload))
+           nil)
+          ((and (eq func 'add-to-list)
+                (memq (doom-unquote (cadr form))
+                      doom-autoload-cached-vars))
+           nil)
+          ((not (eq func 'autoload))
+           form)
+          ((and expand (not (file-name-absolute-p (nth 2 form))))
+           (defvar doom--autoloads-path-cache nil)
+           (setf (nth 2 form)
+                 (let ((path (nth 2 form)))
+                   (or (cdr (assoc path doom--autoloads-path-cache))
+                       (when-let* ((libpath (locate-library path))
+                                   (libpath (file-name-sans-extension libpath))
+                                   (libpath (abbreviate-file-name libpath)))
+                         (push (cons path libpath) doom--autoloads-path-cache)
+                         libpath)
+                       path)))
+           form)
+          (form))))
 
-;;
-;; Doom autoloads
-
-(defun doom--file-cookie-p (file)
-  "Returns the return value of the ;;;###if predicate form in FILE."
+(defun doom-cli--generate-autoloads-autodefs (file buffer module &optional module-enabled-p)
   (with-temp-buffer
-    (insert-file-contents-literally file nil 0 256)
-    (if (and (re-search-forward "^;;;###if " nil t)
-             (<= (line-number-at-pos) 3))
-        (let ((load-file-name file))
-          (eval (sexp-at-point)))
-      t)))
+    (insert-file-contents file)
+    (while (re-search-forward "^;;;###autodef *\\([^\n]+\\)?\n" nil t)
+      (let* ((standard-output buffer)
+             (form    (read (current-buffer)))
+             (altform (match-string 1))
+             (definer (car-safe form))
+             (symbol  (doom-unquote (cadr form))))
+        (cond ((and (not module-enabled-p) altform)
+               (print (read altform)))
+              ((memq definer '(defun defmacro cl-defun cl-defmacro))
+               (if module-enabled-p
+                   (print (make-autoload form file))
+                 (cl-destructuring-bind (_ _ arglist &rest body) form
+                   (print
+                    (if altform
+                        (read altform)
+                      (append
+                       (list (pcase definer
+                               (`defun 'defmacro)
+                               (`cl-defun `cl-defmacro)
+                               (_ type))
+                             symbol arglist
+                             (format "THIS FUNCTION DOES NOTHING BECAUSE %s IS DISABLED\n\n%s"
+                                     module
+                                     (if (stringp (car body))
+                                         (pop body)
+                                       "No documentation.")))
+                       (cl-loop for arg in arglist
+                                if (and (symbolp arg)
+                                        (not (keywordp arg))
+                                        (not (memq arg cl--lambda-list-keywords)))
+                                collect arg into syms
+                                else if (listp arg)
+                                collect (car arg) into syms
+                                finally return (if syms `((ignore ,@syms)))))))))
+               (print `(put ',symbol 'doom-module ',module)))
+              ((eq definer 'defalias)
+               (cl-destructuring-bind (_ _ target &optional docstring) form
+                 (unless module-enabled-p
+                   (setq target #'ignore
+                         docstring
+                         (format "THIS FUNCTION DOES NOTHING BECAUSE %s IS DISABLED\n\n%s"
+                                 module docstring)))
+                 (print `(put ',symbol 'doom-module ',module))
+                 (print `(defalias ',symbol #',(doom-unquote target) ,docstring))))
+              (module-enabled-p (print form)))))))
 
-(defun doom--generate-header (func)
-  (goto-char (point-min))
-  (insert ";; -*- lexical-binding:t -*-\n"
-          ";; This file is autogenerated by `" (symbol-name func) "', DO NOT EDIT !!\n\n"))
+(defun doom-cli--generate-autoloads-buffer (file)
+  (let* (;; Prevent `autoload-find-file' from firing file hooks, e.g. adding
+         ;; to recentf.
+         find-file-hook
+         write-file-functions
+         ;; Prevent a possible source of crashes when there's a syntax error
+         ;; in the autoloads file
+         debug-on-error
+         ;; The following bindings are in `package-generate-autoloads'.
+         ;; Presumably for a good reason, so I just copied them
+         (backup-inhibited t)
+         (version-control 'never)
+         case-fold-search    ; reduce magic
+         autoload-timestamps ; reduce noise in generated files
+         ;; Needed for `autoload-generate-file-autoloads'
+         (generated-autoload-load-name (file-name-sans-extension file))
+         (target-buffer (current-buffer))
+         (module (doom-module-from-path file))
+         (module-enabled-p (and (or (memq (car module) '(:core :private))
+                                    (doom-module-p (car module) (cdr module)))
+                                (doom-file-cookie-p file "if" t))))
+    (save-excursion
+      (when module-enabled-p
+        (quiet! (autoload-generate-file-autoloads file target-buffer)))
+      (doom-cli--generate-autoloads-autodefs
+       file target-buffer module module-enabled-p))))
 
-(defun doom--generate-autoloads (targets)
+(defun doom-cli--generate-autoloads (files &optional scan)
   (require 'autoload)
-  (dolist (file targets)
-    (let* ((file (file-truename file))
-           (generated-autoload-file doom-autoload-file)
-           (generated-autoload-load-name (file-name-sans-extension file))
-           (noninteractive (not doom-debug-mode))
-           autoload-timestamps)
-      (print!
-       (cond ((not (doom--file-cookie-p file))
-              "⚠ Ignoring %s")
-             ((autoload-generate-file-autoloads file (current-buffer))
-              (yellow "✕ Nothing in %s"))
-             ((green "✓ Scanned %s")))
-       (if (file-in-directory-p file default-directory)
-           (file-relative-name file)
-         (abbreviate-file-name file))))))
-
-(defun doom--expand-autoloads ()
-  (let ((load-path
-         ;; NOTE With `doom-private-dir' in `load-path', Doom autoloads files
-         ;; will be unable to declare autoloads for the built-in autoload.el
-         ;; Emacs package, should $DOOMDIR/autoload.el exist. Not sure why
-         ;; they'd want to though, so it's an acceptable compromise.
-         (append (list doom-private-dir)
-                 doom-modules-dirs
-                 load-path))
-        cache)
-    (while (re-search-forward "^\\s-*(autoload\\s-+'[^ ]+\\s-+\"\\([^\"]*\\)\"" nil t)
-      (let ((path (match-string 1)))
-        (replace-match
-         (or (cdr (assoc path cache))
-             (when-let* ((libpath (locate-library path))
-                         (libpath (file-name-sans-extension libpath)))
-               (push (cons path (abbreviate-file-name libpath)) cache)
-               libpath)
-             path)
-         t t nil 1)))))
-
-(defun doom--generate-autodefs (targets enabled-targets)
-  (goto-char (point-max))
-  (search-backward ";;;***" nil t)
-  (save-excursion (insert "\n"))
-  (dolist (path targets)
-    (insert
-     (with-temp-buffer
-       (insert-file-contents path)
-       (let ((member-p (or (member path enabled-targets)
-                           (file-in-directory-p path doom-core-dir)))
-             forms)
-         (while (re-search-forward "^;;;###autodef *\\([^\n]+\\)?\n" nil t)
-           (let* ((sexp (sexp-at-point))
-                  (pred (match-string 1))
-                  (type (car sexp))
-                  (name (doom-unquote (cadr sexp)))
-                  (origin (cond ((doom-module-from-path path))
-                                ((file-in-directory-p path doom-private-dir)
-                                 `(:private . ,(intern (file-name-base path))))
-                                ((file-in-directory-p path doom-emacs-dir)
-                                 `(:core . ,(intern (file-name-base path))))))
-                  (doom-file-form
-                   `(put ',name 'doom-file ,(abbreviate-file-name path))))
-             (cond ((memq type '(defun defmacro cl-defun cl-defmacro))
-                    (cl-destructuring-bind (_ name arglist &rest body) sexp
-                      (let ((docstring (if (stringp (car body))
-                                           (pop body)
-                                         "No documentation.")))
-                        (push (cond ((not (and member-p
-                                               (or (null pred)
-                                                   (let ((load-file-name path))
-                                                     (eval (read pred) t)))))
-                                     (push doom-file-form forms)
-                                     (setq docstring (format "THIS FUNCTION DOES NOTHING BECAUSE %s IS DISABLED\n\n%s"
-                                                             origin docstring))
-                                     (condition-case-unless-debug e
-                                         (append (list (pcase type
-                                                         (`defun 'defmacro)
-                                                         (`cl-defun `cl-defmacro)
-                                                         (_ type))
-                                                       name arglist docstring)
-                                                 (cl-loop for arg in arglist
-                                                          if (and (symbolp arg)
-                                                                  (not (keywordp arg))
-                                                                  (not (memq arg cl--lambda-list-keywords)))
-                                                          collect arg into syms
-                                                          else if (listp arg)
-                                                          collect (car arg) into syms
-                                                          finally return (if syms `((ignore ,@syms)))))
-                                       ('error
-                                        (message "Ignoring autodef %s (%s)"
-                                                 name e)
-                                        nil)))
-                                    ((make-autoload sexp (abbreviate-file-name (file-name-sans-extension path)))))
-                              forms)
-                        (push `(put ',name 'doom-module ',origin) forms))))
-
-                   ((eq type 'defalias)
-                    (cl-destructuring-bind (_type name target &optional docstring) sexp
-                      (let ((name (doom-unquote name))
-                            (target (doom-unquote target)))
-                        (unless (and member-p
-                                     (or (null pred)
-                                         (let ((load-file-name path))
-                                           (eval (read pred) t))))
-                          (setq target #'ignore))
-                        (push doom-file-form forms)
-                        (push `(put ',name 'doom-module ',origin) forms)
-                        (push `(defalias ',name #',target ,docstring)
-                              forms))))
-
-                   ((and member-p
-                         (or (null pred)
-                             (eval (read pred) t)))
-                    (push sexp forms)))))
-         (if forms
-             (concat (string-join (mapcar #'prin1-to-string (reverse forms)) "\n")
-                     "\n")
-           ""))))))
-
-(defun doom--cleanup-autoloads ()
-  (goto-char (point-min))
-  (when (re-search-forward "^;;\\(;[^\n]*\\| no-byte-compile: t\\)\n" nil t)
-    (replace-match "" t t)))
-
-(defun doom-reload-doom-autoloads (&optional force-p)
-  "Refreshes the autoloads.el file, specified by `doom-autoload-file', if
-necessary (or if FORCE-P is non-nil).
-
-It scans and reads core/autoload/*.el, modules/*/*/autoload.el and
-modules/*/*/autoload/*.el, and generates `doom-autoload-file'. This file tells
-Emacs where to find lazy-loaded functions.
-
-This should be run whenever your `doom!' block, or a module autoload file, is
-modified."
-  (let* ((default-directory doom-emacs-dir)
-         (doom-modules (doom-modules))
-         (targets
-          (file-expand-wildcards
-           (expand-file-name "autoload/*.el" doom-core-dir)))
-         (enabled-targets (copy-sequence targets))
-         case-fold-search)
-    (dolist (path (doom-module-load-path t))
-      (let* ((auto-dir  (expand-file-name "autoload" path))
-             (auto-file (expand-file-name "autoload.el" path))
-             (module    (doom-module-from-path auto-file))
-             (module-p  (or (doom-module-p (car module) (cdr module))
-                            (file-equal-p path doom-private-dir))))
-        (when (file-exists-p auto-file)
-          (push auto-file targets)
-          (if module-p (push auto-file enabled-targets)))
-        (dolist (file (doom-files-in auto-dir :match "\\.el$" :full t))
-          (push file targets)
-          (if module-p (push file enabled-targets)))))
-    (if (and (not force-p)
-             (not doom-emacs-changed-p)
-             (file-exists-p doom-autoload-file)
-             (not (file-newer-than-file-p (expand-file-name "init.el" doom-private-dir)
-                                          doom-autoload-file))
-             (not (cl-loop for file in targets
-                           if (file-newer-than-file-p file doom-autoload-file)
-                           return t)))
-        (progn (print! (green "Doom core autoloads is up-to-date"))
-               (doom-initialize-autoloads doom-autoload-file)
-               nil)
-      (doom-delete-autoloads-file doom-autoload-file)
-      (message "Generating new autoloads.el")
-      (make-directory (file-name-directory doom-autoload-file) t)
-      (with-temp-file doom-autoload-file
-        (doom--generate-header 'doom-reload-doom-autoloads)
+  (let (autoloads)
+    (dolist (file
+             (cl-remove-if-not #'file-readable-p files)
+             (nreverse (delq nil autoloads)))
+      (with-temp-buffer
+        (print! (debug "- Scanning %s") (relpath file doom-emacs-dir))
+        (if scan
+            (doom-cli--generate-autoloads-buffer file)
+          (insert-file-contents file))
         (save-excursion
-          (doom--generate-autoloads (reverse enabled-targets)))
-          ;; Replace autoload paths (only for module autoloads) with absolute
-          ;; paths for faster resolution during load and simpler `load-path'
-        (save-excursion
-          (doom--expand-autoloads)
-          (print! (green "✓ Expanded module autoload paths")))
-        ;; Generates stub definitions for functions/macros defined in disabled
-        ;; modules, so that you will never get a void-function when you use
-        ;; them.
-        (save-excursion
-          (doom--generate-autodefs (reverse targets) enabled-targets)
-          (print! (green "✓ Generated autodefs")))
-        ;; Remove byte-compile inhibiting file variables so we can byte-compile
-        ;; the file, and autoload comments.
-        (doom--cleanup-autoloads)
-        (print! (green "✓ Clean up autoloads")))
-      ;; Byte compile it to give the file a chance to reveal errors.
-      (doom--byte-compile-file doom-autoload-file)
-      (doom--do-load doom-autoload-file)
-      t)))
-
-
-;;
-;; Package autoloads
-
-(defun doom--generate-package-autoloads ()
-  (dolist (spec (doom-get-package-alist))
-    (if-let* ((pkg  (car spec))
-              (desc (cdr spec)))
-        (unless (memq pkg doom-autoload-excluded-packages)
-          (let ((file (concat (package--autoloads-file-name desc) ".el")))
-            (when (file-exists-p file)
-              (insert "(let ((load-file-name " (prin1-to-string (abbreviate-file-name file)) "))\n")
-              (insert-file-contents file)
-              (while (re-search-forward "^\\(?:;;\\(.*\n\\)\\|\n\\|(provide '[^\n]+\\)" nil t)
-                (unless (nth 8 (syntax-ppss))
-                  (replace-match "" t t)))
-              (unless (bolp) (insert "\n"))
-              (insert ")\n"))))
-      (message "Couldn't find package desc for %s" (car spec)))))
-
-(defun doom--generate-var-cache ()
-  (doom-initialize-packages)
-  (prin1 `(setq load-path ',load-path
-                auto-mode-alist ',auto-mode-alist
-                Info-directory-list ',Info-directory-list
-                doom-disabled-packages ',doom-disabled-packages
-                package-activated-list ',package-activated-list)
-         (current-buffer)))
-
-(defun doom--cleanup-package-autoloads ()
-  (while (re-search-forward "^\\s-*\\((\\(?:add-to-list\\|\\(?:when\\|if\\) (boundp\\)\\s-+'\\(?:load-path\\|auto-mode-alist\\)\\)" nil t)
-    (goto-char (match-beginning 1))
-    (kill-sexp)))
-
-(defun doom-reload-package-autoloads (&optional force-p)
-  "Compiles `doom-package-autoload-file' from the autoloads files of all
-installed packages. It also caches `load-path', `Info-directory-list',
-`doom-disabled-packages', `package-activated-list' and `auto-mode-alist'.
-
-Will do nothing if none of your installed packages have been modified. If
-FORCE-P (universal argument) is non-nil, regenerate it anyway.
-
-This should be run whenever your `doom!' block or update your packages."
-  (if (and (not force-p)
-           (not doom-emacs-changed-p)
-           (file-exists-p doom-package-autoload-file)
-           (not (file-newer-than-file-p doom-packages-dir doom-package-autoload-file))
-           (not (ignore-errors
-                  (cl-loop for key being the hash-keys of (doom-modules)
-                           for path = (doom-module-path (car key) (cdr key) "packages.el")
-                           if (file-newer-than-file-p path doom-package-autoload-file)
-                           return t))))
-      (ignore (print! (green "Doom package autoloads is up-to-date"))
-              (doom-initialize-autoloads doom-package-autoload-file))
-    (let (case-fold-search)
-      (doom-delete-autoloads-file doom-package-autoload-file)
-      (with-temp-file doom-package-autoload-file
-        (doom--generate-header 'doom-reload-package-autoloads)
-        (save-excursion
-          ;; Cache the important and expensive-to-initialize state here.
-          (doom--generate-var-cache)
-          (print! (green "✓ Cached package state"))
-          ;; Loop through packages and concatenate all their autoloads files.
-          (doom--generate-package-autoloads)
-          (print! (green "✓ Package autoloads included")))
-        ;; Remove `load-path' and `auto-mode-alist' modifications (most of them,
-        ;; at least); they are cached later, so all those membership checks are
-        ;; unnecessary overhead.
-        (doom--cleanup-package-autoloads)
-        (print! (green "✓ Removed load-path/auto-mode-alist entries"))))
-    (doom--byte-compile-file doom-package-autoload-file)
-    (doom--do-load doom-package-autoload-file)
-    t))
+          (let ((filestr (prin1-to-string file)))
+            (while (re-search-forward "\\_<load-file-name\\_>" nil t)
+              ;; `load-file-name' is meaningless in a concatenated
+              ;; mega-autoloads file, so we replace references to it with the
+              ;; file they came from.
+              (let ((ppss (save-excursion (syntax-ppss))))
+                (or (nth 3 ppss)
+                    (nth 4 ppss)
+                    (replace-match filestr t t))))))
+        (let ((load-file-name file)
+              (load-path
+               (append (list doom-private-dir)
+                       doom-modules-dirs
+                       load-path)))
+          (condition-case _
+              (while t
+                (push (doom-cli--filter-form (read (current-buffer))
+                                             scan)
+                      autoloads))
+            (end-of-file)))))))

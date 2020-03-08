@@ -1,66 +1,45 @@
 ;;; core/autoload/cli.el -*- lexical-binding: t; -*-
 
-(require 'core-cli)
-
-(defun doom--run (command &optional yes)
-  (let ((default-directory doom-emacs-dir)
-        (doom-auto-accept yes))
-    (let ((compilation-buffer-name-function (lambda (_) "*bin/doom*")))
-      (compile (format "bin/doom %s" command) t))
-    (while compilation-in-progress
-      (sit-for 1))
-    (when (y-or-n-p "Reload Doom config?")
-      (doom/reload))
-    (message "Done")))
-
+;;
+;;; Library
 
 ;;;###autoload
-(defun doom//update (&optional yes)
-  "TODO"
-  (interactive "P")
-  (doom--run "update" yes))
+(defun doom-call-process (command &rest args)
+  "Execute COMMAND with ARGS synchronously.
+
+Returns (STATUS . OUTPUT) when it is done, where STATUS is the returned error
+code of the process and OUTPUT is its stdout output."
+  (with-temp-buffer
+    (cons (or (apply #'call-process command nil t nil args)
+              -1)
+          (string-trim (buffer-string)))))
 
 ;;;###autoload
-(defun doom//upgrade (&optional yes)
-  "TODO"
-  (interactive "P")
-  (doom--run "upgrade" yes))
+(defun doom-exec-process (command &rest args)
+  "Execute COMMAND with ARGS synchronously.
 
-;;;###autoload
-(defun doom//install (&optional yes)
-  "TODO"
-  (interactive "P")
-  (doom--run "install" yes))
+Unlike `doom-call-process', this pipes output to `standard-output' on the fly to
+simulate 'exec' in the shell, so batch scripts could run external programs
+synchronously without sacrificing their output.
 
-;;;###autoload
-(defun doom//autoremove (&optional yes)
-  "TODO"
-  (interactive "P")
-  (doom--run "autoremove" yes))
-
-;;;###autoload
-(defun doom//refresh (&optional yes)
-  "TODO"
-  (interactive "P")
-  (doom--run "refresh" yes))
-
-;;;###autoload
-(defun doom/reload (&optional force-p)
-  "Reloads your config. This is experimental!
-
-If called from a noninteractive session, this will try to communicate with a
-live server (if one is found) to tell it to run this function.
-
-If called from an interactive session, tries to reload autoloads files (if
-necessary), reinistalize doom (via `doom-initialize') and reloads your private
-init.el and config.el. Then runs `doom-reload-hook'."
-  (interactive "P")
-  (require 'core-cli)
-  (doom-reload-autoloads force-p)
-  (setq load-path doom-site-load-path)
-  (let (doom-init-p)
-    (doom-initialize))
-  (with-demoted-errors "PRIVATE CONFIG ERROR: %s"
-    (doom-initialize-modules 'force))
-  (run-hook-wrapped 'doom-reload-hook #'doom-try-run-hook)
-  (message "Finished!"))
+Warning: freezes indefinitely on any stdin prompt."
+  ;; FIXME Is there any way to handle prompts?
+  (with-temp-buffer
+    (cons (let ((process
+                 (make-process :name "doom-sh"
+                               :buffer (current-buffer)
+                               :command (cons command args)
+                               :connection-type 'pipe))
+                done-p)
+            (set-process-filter
+             process (lambda (_process output)
+                       (princ output (current-buffer))
+                       (princ output)))
+            (set-process-sentinel
+             process (lambda (process _event)
+                       (when (memq (process-status process) '(exit stop))
+                         (setq done-p t))))
+            (while (not done-p)
+              (sit-for 0.1))
+            (process-exit-status process))
+          (string-trim (buffer-string)))))

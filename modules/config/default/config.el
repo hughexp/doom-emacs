@@ -7,25 +7,63 @@
     minibuffer-local-must-match-map
     minibuffer-local-isearch-map
     read-expression-map
-    ,@(if (featurep! :completion ivy) '(ivy-minibuffer-map)))
+    ,@(cond ((featurep! :completion ivy)
+             '(ivy-minibuffer-map
+               ivy-switch-buffer-map))
+            ((featurep! :completion helm)
+             '(helm-map
+               helm-ag-map
+               helm-read-file-map))))
   "A list of all the keymaps used for the minibuffer.")
 
 
 ;;
-;; Reasonable defaults
+;;; Reasonable defaults
+
+;;;###package avy
+(setq avy-all-windows nil
+      avy-all-windows-alt t
+      avy-background t
+      ;; the unpredictability of this (when enabled) makes it a poor default
+      avy-single-candidate-jump nil)
+
 
 (after! epa
-  (setq epa-file-encrypt-to
-        (or epa-file-encrypt-to
-            ;; Collect all public key IDs with your username
-            (unless (string-empty-p user-full-name)
-              (cl-loop for key in (ignore-errors (epg-list-keys (epg-make-context) user-full-name))
-                       collect (epg-sub-key-id (car (epg-key-sub-key-list key)))))
-            user-mail-address)
-        ;; With GPG 2.1, this forces gpg-agent to use the Emacs minibuffer to
-        ;; prompt for the key passphrase.
-        epa-pinentry-mode 'loopback))
+  ;; With GPG 2.1+, this forces gpg-agent to use the Emacs minibuffer to prompt
+  ;; for the key passphrase.
+  (setq epa-pinentry-mode 'loopback)
+   ;; Default to the first secret key available in your keyring.
+  (setq-default
+   epa-file-encrypt-to
+   (or (default-value 'epa-file-encrypt-to)
+       (unless (string-empty-p user-full-name)
+         (cl-loop for key in (ignore-errors (epg-list-keys (epg-make-context) user-full-name))
+                  collect (epg-sub-key-id (car (epg-key-sub-key-list key)))))
+       user-mail-address))
+   ;; And suppress prompts if epa-file-encrypt-to has a default value (without
+   ;; overwriting file-local values).
+  (defadvice! +default--dont-prompt-for-keys-a (&rest _)
+    :before #'epa-file-write-region
+    (unless (local-variable-p 'epa-file-encrypt-to)
+      (setq-local epa-file-encrypt-to (default-value 'epa-file-encrypt-to)))))
 
+
+(use-package! drag-stuff
+  :defer t
+  :init
+  (map! "<M-up>"    #'drag-stuff-up
+        "<M-down>"  #'drag-stuff-down
+        "<M-left>"  #'drag-stuff-left
+        "<M-right>" #'drag-stuff-right))
+
+
+;;;###package tramp
+(unless IS-WINDOWS
+  (setq tramp-default-method "ssh")) ; faster than the default scp
+
+
+;;
+;;; Smartparens config
 
 (when (featurep! +smartparens)
   ;; You can disable :unless predicates with (sp-pair "'" nil :unless nil)
@@ -33,8 +71,16 @@
   ;; or specific :post-handlers with:
   ;;   (sp-pair "{" nil :post-handlers '(:rem ("| " "SPC")))
   (after! smartparens
+    ;; Smartparens' navigation feature is neat, but does not justify how
+    ;; expensive it is. It's also less useful for evil users. This may need to
+    ;; be reactivated for non-evil users though. Needs more testing!
+    (add-hook! 'after-change-major-mode-hook
+      (defun doom-disable-smartparens-navigate-skip-match-h ()
+        (setq sp-navigate-skip-match nil
+              sp-navigate-consider-sgml-tags nil)))
+
     ;; Autopair quotes more conservatively; if I'm next to a word/before another
-    ;; quote, I likely don't want to open a new pair.
+    ;; quote, I don't want to open a new pair or it would unbalance them.
     (let ((unless-list '(sp-point-before-word-p
                          sp-point-after-word-p
                          sp-point-before-same-p)))
@@ -51,6 +97,9 @@
                ;; I likely don't want a new pair if adjacent to a word or opening brace
                :unless '(sp-point-before-word-p sp-point-before-same-p)))
 
+    ;; In lisps ( should open a new form if before another parenthesis
+    (sp-local-pair sp-lisp-modes "(" ")" :unless '(:rem sp-point-before-same-p))
+
     ;; Major-mode specific fixes
     (sp-local-pair '(ruby-mode enh-ruby-mode) "{" "}"
                    :pre-handlers '(:rem sp-ruby-pre-handler)
@@ -62,12 +111,52 @@
 
     ;; Reasonable default pairs for HTML-style comments
     (sp-local-pair (append sp--html-modes '(markdown-mode gfm-mode))
-                   "<!--" "-->" :actions '(insert) :post-handlers '(("| " "SPC")))
+                   "<!--" "-->"
+                   :unless '(sp-point-before-word-p sp-point-before-same-p)
+                   :actions '(insert) :post-handlers '(("| " "SPC")))
+
+    ;; Disable electric keys in C modes because it interferes with smartparens
+    ;; and custom bindings. We'll do it ourselves (mostly).
+    (after! cc-mode
+      (setq-default c-electric-flag nil)
+      (dolist (key '("#" "{" "}" "/" "*" ";" "," ":" "(" ")" "\177"))
+        (define-key c-mode-base-map key nil))
+
+      ;; Smartparens and cc-mode both try to autoclose angle-brackets
+      ;; intelligently. The result isn't very intelligent (causes redundant
+      ;; characters), so just do it ourselves.
+      (define-key! c++-mode-map "<" nil ">" nil)
+
+      (defun +default-cc-sp-point-is-template-p (id action context)
+        "Return t if point is in the right place for C++ angle-brackets."
+        (and (sp-in-code-p id action context)
+             (cond ((eq action 'insert)
+                    (sp-point-after-word-p id action context))
+                   ((eq action 'autoskip)
+                    (/= (char-before) 32)))))
+
+      (defun +default-cc-sp-point-after-include-p (id action context)
+        "Return t if point is in an #include."
+        (and (sp-in-code-p id action context)
+             (save-excursion
+               (goto-char (line-beginning-position))
+               (looking-at-p "[ 	]*#include[^<]+"))))
+
+      ;; ...and leave it to smartparens
+      (sp-local-pair '(c++-mode objc-mode)
+                     "<" ">"
+                     :when '(+default-cc-sp-point-is-template-p
+                             +default-cc-sp-point-after-include-p)
+                     :post-handlers '(("| " "SPC")))
+
+      (sp-local-pair '(c-mode c++-mode objc-mode java-mode)
+                     "/*!" "*/"
+                     :post-handlers '(("||\n[i]" "RET") ("[d-1]< | " "SPC"))))
 
     ;; Expand C-style doc comment blocks. Must be done manually because some of
     ;; these languages use specialized (and deferred) parsers, whose state we
     ;; can't access while smartparens is doing its thing.
-    (defun +default-expand-doc-comment-block (&rest _ignored)
+    (defun +default-expand-asterix-doc-comment-block (&rest _ignored)
       (let ((indent (current-indentation)))
         (newline-and-indent)
         (save-excursion
@@ -76,14 +165,46 @@
           (delete-char 2))))
     (sp-local-pair
      '(js2-mode typescript-mode rjsx-mode rust-mode c-mode c++-mode objc-mode
-       java-mode php-mode css-mode scss-mode less-css-mode stylus-mode)
+       csharp-mode java-mode php-mode css-mode scss-mode less-css-mode
+       stylus-mode scala-mode)
      "/*" "*/"
      :actions '(insert)
-     :post-handlers '(("| " "SPC") ("|\n*/[i][d-2]" "RET") (+default-expand-doc-comment-block "*")))
+     :post-handlers '(("| " "SPC")
+                      ("|\n[i]*/[d-2]" "RET")
+                      (+default-expand-asterix-doc-comment-block "*")))
+
+    (after! smartparens-ml
+      (sp-with-modes '(tuareg-mode fsharp-mode)
+        (sp-local-pair "(*" "*)" :actions nil)
+        (sp-local-pair "(*" "*"
+                       :actions '(insert)
+                       :post-handlers '(("| " "SPC") ("|\n[i]*)[d-2]" "RET")))))
+
+    (after! smartparens-markdown
+      (sp-with-modes '(markdown-mode gfm-mode)
+        (sp-local-pair "```" "```" :post-handlers '(:add ("||\n[i]" "RET")))
+
+        ;; The original rules for smartparens had an odd quirk: inserting two
+        ;; asterixex would replace nearby quotes with asterixes. These two rules
+        ;; set out to fix this.
+        (sp-local-pair "**" nil :actions :rem)
+        (sp-local-pair "*" "*"
+                       :actions '(insert skip)
+                       :unless '(:rem sp-point-at-bol-p)
+                       ;; * then SPC will delete the second asterix and assume
+                       ;; you wanted a bullet point. * followed by another *
+                       ;; will produce an extra, assuming you wanted **|**.
+                       :post-handlers '(("[d1]" "SPC") ("|*" "*"))))
+
+      ;; This keybind allows * to skip over **.
+      (map! :map markdown-mode-map
+            :ig "*" (λ! (if (looking-at-p "\\*\\* *$")
+                            (forward-char 2)
+                          (call-interactively 'self-insert-command)))))
 
     ;; Highjacks backspace to:
     ;;  a) balance spaces inside brackets/parentheses ( | ) -> (|)
-    ;;  b) delete space-indented `tab-width' steps at a time
+    ;;  b) delete up to nearest column multiple of `tab-width' at a time
     ;;  c) close empty multiline brace blocks in one step:
     ;;     {
     ;;     |
@@ -94,34 +215,17 @@
     ;;  e) properly delete smartparen pairs when they are encountered, without
     ;;     the need for strict mode.
     ;;  f) do none of this when inside a string
-    (advice-add #'delete-backward-char :override #'doom/delete-backward-char)
+    (advice-add #'delete-backward-char :override #'+default--delete-backward-char-a))
 
-    ;; Makes `newline-and-indent' continue comments (and more reliably)
-    (advice-add #'newline-and-indent :around #'doom*newline-indent-and-continue-comments)))
+  ;; Makes `newline-and-indent' continue comments (and more reliably)
+  (advice-add #'newline-and-indent :override #'+default--newline-indent-and-continue-comments-a))
 
 
 ;;
-;; Keybinding fixes
+;;; Keybinding fixes
 
 ;; This section is dedicated to "fixing" certain keys so that they behave
 ;; sensibly (and consistently with similar contexts).
-
-;; Make SPC u SPC u [...] possible (#747)
-(map! :map universal-argument-map
-      :prefix doom-leader-key     "u" #'universal-argument-more
-      :prefix doom-leader-alt-key "u" #'universal-argument-more)
-
-(defun +default|setup-input-decode-map ()
-  "Ensure TAB and [tab] are treated the same in TTY Emacs."
-  (define-key input-decode-map (kbd "TAB") [tab]))
-(add-hook 'tty-setup-hook #'+default|setup-input-decode-map)
-
-;; A Doom convention where C-s on popups and interactive searches will invoke
-;; ivy/helm for their superior filtering.
-(define-key! :keymaps +default-minibuffer-maps
-  "C-s"    (if (featurep! :completion ivy)
-               #'counsel-minibuffer-history
-             #'helm-minibuffer-history))
 
 ;; Consistently use q to quit windows
 (after! tabulated-list
@@ -130,7 +234,7 @@
 ;; OS specific fixes
 (when IS-MAC
   ;; Fix MacOS shift+tab
-  (define-key input-decode-map [S-iso-lefttab] [backtab])
+  (define-key key-translation-map [S-iso-lefttab] [backtab])
   ;; Fix conventional OS keys in Emacs
   (map! "s-`" #'other-frame  ; fix frame-switching
         ;; fix OS window/frame navigation/manipulation keys
@@ -150,25 +254,120 @@
         "s-c" (if (featurep 'evil) #'evil-yank #'copy-region-as-kill)
         "s-v" #'yank
         "s-s" #'save-buffer
+        :v "s-x" #'kill-region
         ;; Buffer-local font scaling
-        "s-+" (λ! (text-scale-set 0))
-        "s-=" #'text-scale-increase
-        "s--" #'text-scale-decrease
+        "s-+" #'doom/reset-font-size
+        "s-=" #'doom/increase-font-size
+        "s--" #'doom/decrease-font-size
         ;; Conventional text-editing keys & motions
         "s-a" #'mark-whole-buffer
-        "s-/" #'doom/toggle-comment-region-or-line
-        :gi [s-return]    #'+default/newline-below
-        :gi [s-S-return]  #'+default/newline-above
-        :gi [s-backspace] #'doom/backward-kill-to-bol-and-indent
-        :gi [s-left]      #'doom/backward-to-bol-or-indent
-        :gi [s-right]     #'doom/forward-to-last-non-comment-or-eol
-        :gi [M-backspace] #'backward-kill-word
-        :gi [M-left]      #'backward-word
-        :gi [M-right]     #'forward-word))
+        "s-/" (λ! (save-excursion (comment-line 1)))
+        :n "s-/" #'evilnc-comment-or-uncomment-lines
+        :v "s-/" #'evilnc-comment-operator
+        :gi  [s-backspace] #'doom/backward-kill-to-bol-and-indent
+        :gi  [s-left]      #'doom/backward-to-bol-or-indent
+        :gi  [s-right]     #'doom/forward-to-last-non-comment-or-eol
+        :gi  [M-backspace] #'backward-kill-word
+        :gi  [M-left]      #'backward-word
+        :gi  [M-right]     #'forward-word))
 
 
 ;;
-;; Doom's keybinding scheme
+;;; Keybind schemes
+
+;; Custom help keys -- these aren't under `+bindings' because they ought to be
+;; universal.
+(define-key! help-map
+  ;; new keybinds
+  "'"    #'describe-char
+  "u"    #'doom/help-autodefs
+  "E"    #'doom/sandbox
+  "M"    #'doom/describe-active-minor-mode
+  "O"    #'+lookup/online
+  "T"    #'doom/toggle-profiler
+  "V"    #'set-variable
+  "W"    #'+default/man-or-woman
+  "C-k"  #'describe-key-briefly
+  "C-l"  #'describe-language-environment
+  "C-m"  #'info-emacs-manual
+
+  ;; Unbind `help-for-help'. Conflicts with which-key's help command for the
+  ;; <leader> h prefix. It's already on ? and F1 anyway.
+  "C-h"  nil
+
+  ;; replacement keybinds
+  ;; replaces `info-emacs-manual' b/c it's on C-m now
+  "r"    nil
+  "rr"   #'doom/reload
+  "rt"   #'doom/reload-theme
+  "rp"   #'doom/reload-packages
+  "rf"   #'doom/reload-font
+  "re"   #'doom/reload-env
+
+  ;; make `describe-bindings' available under the b prefix which it previously
+  ;; occupied. Add more binding related commands under that prefix as well
+  "b"    nil
+  "bb"   #'describe-bindings
+  "bi"   #'which-key-show-minor-mode-keymap
+  "bm"   #'which-key-show-major-mode
+  "bt"   #'which-key-show-top-level
+  "bf"   #'which-key-show-full-keymap
+  "bk"   #'which-key-show-keymap
+
+  ;; replaces `apropos-documentation' b/c `apropos' covers this
+  "d"    nil
+  "db"   #'doom/report-bug
+  "dc"   #'doom/goto-private-config-file
+  "dC"   #'doom/goto-private-init-file
+  "dd"   #'doom/toggle-debug-mode
+  "df"   #'doom/help-faq
+  "dh"   #'doom/help
+  "dl"   #'doom/help-search-load-path
+  "dL"   #'doom/help-search-loaded-files
+  "dm"   #'doom/help-modules
+  "dn"   #'doom/help-news
+  "dN"   #'doom/help-news-search
+  "dpc"  #'doom/help-package-config
+  "dpd"  #'doom/goto-private-packages-file
+  "dph"  #'doom/help-package-homepage
+  "dpp"  #'doom/help-packages
+  "ds"   #'doom/help-search-headings
+  "dS"   #'doom/help-search
+  "dt"   #'doom/toggle-profiler
+  "du"   #'doom/help-autodefs
+  "dv"   #'doom/version
+  "dx"   #'doom/sandbox
+
+  ;; replaces `apropos-command'
+  "a"    #'apropos
+  "A"    #'apropos-documentation
+  ;; replaces `describe-copying' b/c not useful
+  "C-c"  #'describe-coding-system
+  ;; replaces `Info-got-emacs-command-node' b/c redundant w/ `Info-goto-node'
+  "F"    #'describe-face
+  ;; replaces `view-hello-file' b/c annoying
+  "h"    nil
+  ;; replaces `view-emacs-news' b/c it's on C-n too
+  "n"    #'doom/help-news
+  ;; replaces `help-with-tutorial', b/c it's less useful than `load-theme'
+  "t"    #'load-theme
+  ;; replaces `finder-by-keyword' b/c not useful
+  "p"    #'doom/help-packages
+  ;; replaces `describe-package' b/c redundant w/ `doom/help-packages'
+  "P"    #'find-library)
+
+(after! which-key
+  (let ((prefix-re (regexp-opt (list doom-leader-key doom-leader-alt-key))))
+    (cl-pushnew `((,(format "\\`\\(?:<\\(?:\\(?:f1\\|help\\)>\\)\\|C-h\\|%s h\\) d\\'" prefix-re))
+                  nil . "doom")
+                which-key-replacement-alist)
+    (cl-pushnew `((,(format "\\`\\(?:<\\(?:\\(?:f1\\|help\\)>\\)\\|C-h\\|%s h\\) r\\'" prefix-re))
+                  nil . "reload")
+                which-key-replacement-alist)
+    (cl-pushnew `((,(format "\\`\\(?:<\\(?:\\(?:f1\\|help\\)>\\)\\|C-h\\|%s h\\) b\\'" prefix-re))
+                  nil . "bindings")
+                which-key-replacement-alist)))
+
 
 (when (featurep! +bindings)
   ;; Make M-x harder to miss
@@ -176,18 +375,33 @@
     "M-x" #'execute-extended-command
     "A-x" #'execute-extended-command)
 
+  ;; A Doom convention where C-s on popups and interactive searches will invoke
+  ;; ivy/helm for their superior filtering.
+  (define-key! :keymaps +default-minibuffer-maps
+    "C-s" (if (featurep! :completion ivy)
+              #'counsel-minibuffer-history
+            #'helm-minibuffer-history))
+
   ;; Smarter C-a/C-e for both Emacs and Evil. C-a will jump to indentation.
   ;; Pressing it again will send you to the true bol. Same goes for C-e, except
   ;; it will ignore comments+trailing whitespace before jumping to eol.
   (map! :gi "C-a" #'doom/backward-to-bol-or-indent
         :gi "C-e" #'doom/forward-to-last-non-comment-or-eol
-        ;; Standardize the behavior of M-RET/M-S-RET as a "add new item
-        ;; below/above" key.
-        :gi [M-return]    #'+default/newline-below
-        :gi [M-S-return]  #'+default/newline-above
-        :gi [C-return]    #'+default/newline-below
-        :gi [C-S-return]  #'+default/newline-above)
+        ;; Standardizes the behavior of modified RET to match the behavior of
+        ;; other editors, particularly Atom, textedit, textmate, and vscode, in
+        ;; which ctrl+RET will add a new "item" below the current one and
+        ;; cmd+RET (Mac) / meta+RET (elsewhere) will add a new, blank line below
+        ;; the current one.
+        :gn [C-return]    #'+default/newline-below
+        :gn [C-S-return]  #'+default/newline-above
+        (:when IS-MAC
+          :gn [s-return]    #'+default/newline-below
+          :gn [S-s-return]  #'+default/newline-above)))
 
-  (if (featurep 'evil)
-      (load! "+evil-bindings")
-    (load! "+emacs-bindings")))
+
+;;
+;;; Bootstrap configs
+
+(if (featurep 'evil)
+    (load! "+evil")
+  (load! "+emacs"))

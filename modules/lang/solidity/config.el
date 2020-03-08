@@ -3,14 +3,15 @@
 ;;
 ;; Packages
 
-;; `solidity-mode'
+;;;###package solidity-mode
 (setq solidity-comment-style 'slash)
 
 
-(def-package! solidity-flycheck  ; included with solidity-mode
-  :when (featurep! :feature syntax-checker)
+(use-package! solidity-flycheck  ; included with solidity-mode
+  :when (featurep! :checkers syntax)
   :after solidity-mode
   :config
+  (set-docsets! 'solidity-mode "Solidity")
   (setq flycheck-solidity-solc-addstd-contracts t)
   (when (funcall flycheck-executable-find solidity-solc-path)
     (add-to-list 'flycheck-checkers 'solidity-checker nil #'eq))
@@ -18,9 +19,9 @@
     (add-to-list 'flycheck-checkers 'solium-checker nil #'eq)))
 
 
-(def-package! company-solidity
+(use-package! company-solidity
   :when (featurep! :completion company)
   :after solidity-mode
   :config
-  (setq company-backends (delq 'company-solidity company-backends))
+  (delq! 'company-solidity company-backends)
   (set-company-backend! 'solidity-mode 'company-solidity))

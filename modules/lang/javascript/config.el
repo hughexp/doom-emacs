@@ -23,17 +23,22 @@
     ;; Other
     :yield "import"))
 
+(after! projectile
+  (pushnew! projectile-project-root-files "package.json")
+  (pushnew! projectile-globally-ignored-directories "node_modules" "flow-typed"))
+
 
 ;;
 ;; Major modes
 
-(def-package! js2-mode
+(use-package! js2-mode
   :mode "\\.m?js\\'"
   :interpreter "node"
   :commands js2-line-break
   :config
-  (setq js2-skip-preprocessor-directives t
-        js-chain-indent t
+  (setq js-chain-indent t
+        ;; Don't mishighlight shebang lines
+        js2-skip-preprocessor-directives t
         ;; let flycheck handle this
         js2-mode-show-parse-errors nil
         js2-mode-show-strict-warnings nil
@@ -43,7 +48,8 @@
         js2-strict-missing-semi-warning nil
         ;; maximum fontification
         js2-highlight-level 3
-        js2-highlight-external-variables t)
+        js2-highlight-external-variables t
+        js2-idle-timer-delay 0.1)
 
   (add-hook 'js2-mode-hook #'rainbow-delimiters-mode)
   ;; Indent switch-case another step
@@ -52,14 +58,14 @@
     mode-name "JS2")
 
   (set-electric! 'js2-mode :chars '(?\} ?\) ?. ?:))
-  (set-repl-handler! 'js2-mode #'+javascript/repl)
+  (set-repl-handler! 'js2-mode #'+javascript/open-repl)
 
   (map! :map js2-mode-map
         :localleader
         "S" #'+javascript/skewer-this-buffer))
 
 
-(def-package! rjsx-mode
+(use-package! rjsx-mode
   :mode "components/.+\\.js$"
   :init
   (defun +javascript-jsx-file-p ()
@@ -73,7 +79,7 @@
   (add-to-list 'magic-mode-alist '(+javascript-jsx-file-p . rjsx-mode))
   :config
   (set-electric! 'rjsx-mode :chars '(?\} ?\) ?. ?>))
-  (when (featurep! :feature syntax-checker)
+  (when (featurep! :checkers syntax)
     (add-hook! 'rjsx-mode-hook
       ;; jshint doesn't know how to deal with jsx
       (push 'javascript-jshint flycheck-disabled-checkers)))
@@ -82,13 +88,22 @@
   ;; a self-closing tag, so that it can insert a matching ending tag at point.
   ;; However, the parser doesn't run immediately, so a fast typist can outrun
   ;; it, causing tags to stay unclosed, so we force it to parse.
-  (defun +javascript|reparse (n)
+  (defadvice! +javascript-reparse-a (n)
     ;; if n != 1, rjsx-electric-gt calls rjsx-maybe-reparse itself
-    (if (= n 1) (rjsx-maybe-reparse)))
-  (advice-add #'rjsx-electric-gt :before #'+javascript|reparse))
+    :before #'rjsx-electric-gt
+    (if (= n 1) (rjsx-maybe-reparse))))
 
 
-(after! typescript-mode
+(use-package! typescript-mode
+  :defer t
+  :init
+  ;; REVIEW Fix #2252. This is overwritten if the :lang web module is enabled.
+  ;;        We associate TSX files with `web-mode' by default instead because
+  ;;        `typescript-mode' does not officially support JSX/TSX. See
+  ;;        https://github.com/emacs-typescript/typescript.el/issues/4
+  (unless (featurep! :lang web)
+    (add-to-list 'auto-mode-alist '("\\.tsx\\'" . typescript-mode)))
+  :config
   (add-hook 'typescript-mode-hook #'rainbow-delimiters-mode)
   (setq-hook! 'typescript-mode-hook
     comment-line-break-function #'js2-line-break)
@@ -113,33 +128,44 @@
     :return "return" :yield "import"))
 
 
-;; `coffee-mode'
+;;;###package coffee-mode
 (setq coffee-indent-like-python-mode t)
 (after! coffee-mode
   (set-docsets! 'coffee-mode "CoffeeScript"))
 
 
 ;;
-;; Tools
+;;; Tools
 
-(def-package! tide
+(add-hook! '(js-mode-hook typescript-mode-hook web-mode-hook)
+  (defun +javascript-init-lsp-or-tide-maybe-h ()
+    "Start `lsp' or `tide' in the current buffer.
+
+LSP will be used if the +lsp flag is enabled for :lang javascript AND if the
+current buffer represents a file in a project.
+
+If LSP fails to start (e.g. no available server or project), then we fall back
+to tide."
+    (let ((buffer-file-name (buffer-file-name (buffer-base-buffer))))
+      (when (or (derived-mode-p 'js-mode 'typescript-mode)
+                (and (eq major-mode 'web-mode)
+                     (string= "tsx" (file-name-extension buffer-file-name))))
+        (if (not buffer-file-name)
+            ;; necessary because `tide-setup' and `lsp' will error if not a
+            ;; file-visiting buffer
+            (add-hook 'after-save-hook #'+javascript-init-tide-or-lsp-maybe-h nil 'local)
+          (or (and (featurep! +lsp) (lsp!))
+              ;; fall back to tide
+              (if (executable-find "node")
+                  (and (require 'tide nil t)
+                       (progn (tide-setup) tide-mode))
+                (ignore
+                 (doom-log "Couldn't start tide because 'node' is missing"))))
+          (remove-hook 'after-save-hook #'+javascript-init-tide-or-lsp-maybe-h 'local))))))
+
+
+(use-package! tide
   :defer t
-  :init
-  ;; Don't let hard errors stop the user from opening js files.
-  (defun +javascript|init-tide ()
-    "Enable `tide-mode' if node is available."
-    (cond ((not buffer-file-name)
-           (add-hook 'after-save-hook #'+javascript|init-tide nil t))
-          ((executable-find "node")
-           (tide-setup))
-          ((message "Couldn't find `node', aborting tide server"))))
-  (add-hook! (js2-mode typescript-mode) #'+javascript|init-tide)
-
-  (defun +javascript|init-tide-in-web-mode ()
-    "Enable `tide-mode' if in a *.tsx file."
-    (when (string= (file-name-extension (or buffer-file-name "")) "tsx")
-      (tide-setup)))
-  (add-hook 'web-mode-hook #'+javascript|init-tide-in-web-mode)
   :config
   (setq tide-completion-detailed t
         tide-always-show-documentation t)
@@ -150,50 +176,80 @@
     (setq-default company-backends (delq 'company-tide (default-value 'company-backends))))
   (set-company-backend! 'tide-mode 'company-tide)
   ;; navigation
-  (set-lookup-handlers! 'tide-mode :async t
-    :definition #'tide-jump-to-definition
-    :references #'tide-references
-    :documentation #'tide-documentation-at-point)
+  (set-lookup-handlers! 'tide-mode
+    :definition '(tide-jump-to-definition :async t)
+    :references '(tide-references :async t))
   ;; resolve to `doom-project-root' if `tide-project-root' fails
-  (advice-add #'tide-project-root :override #'+javascript*tide-project-root)
+  (advice-add #'tide-project-root :override #'+javascript-tide-project-root-a)
   ;; cleanup tsserver when no tide buffers are left
   (add-hook! 'tide-mode-hook
-    (add-hook 'kill-buffer-hook #'+javascript|cleanup-tide-processes nil t))
+    (add-hook 'kill-buffer-hook #'+javascript-cleanup-tide-processes-h nil t))
+
+  ;; Eldoc is activated too soon and disables itself, thinking there is no eldoc
+  ;; support in the current buffer, so we must re-enable it later once eldoc
+  ;; support exists. It is set *after* tide-mode is enabled, so enabling it on
+  ;; `tide-mode-hook' is too early, so...
+  (advice-add #'tide-setup :after #'eldoc-mode)
+
+  (define-key tide-mode-map [remap +lookup/documentation] #'tide-documentation-at-point)
 
   (map! :localleader
         :map tide-mode-map
         "R"   #'tide-restart-server
-        "f"   #'tide-reformat
-        "rs"  #'tide-rename-symbol
+        "f"   #'tide-format
+        "rrs" #'tide-rename-symbol
         "roi" #'tide-organize-imports))
 
 
-(def-package! xref-js2
-  :when (featurep! :feature lookup)
+(use-package! xref-js2
+  :when (featurep! :tools lookup)
   :after (:or js2-mode rjsx-mode)
   :config
   (set-lookup-handlers! '(js2-mode rjsx-mode)
     :xref-backend #'xref-js2-xref-backend))
 
 
-(def-package! js2-refactor
+(use-package! js2-refactor
   :hook ((js2-mode rjsx-mode) . js2-refactor-mode)
+  :init
+  (map! :after js2-mode
+        :map js2-mode-map
+        :localleader
+        (:prefix ("r" . "refactor")
+          (:prefix ("a" . "add/arguments"))
+          (:prefix ("b" . "barf"))
+          (:prefix ("c" . "contract"))
+          (:prefix ("d" . "debug"))
+          (:prefix ("e" . "expand/extract"))
+          (:prefix ("i" . "inject/inline/introduce"))
+          (:prefix ("l" . "localize/log"))
+          (:prefix ("o" . "organize"))
+          (:prefix ("r" . "rename"))
+          (:prefix ("s" . "slurp/split/string"))
+          (:prefix ("t" . "toggle"))
+          (:prefix ("u" . "unwrap"))
+          (:prefix ("v" . "var"))
+          (:prefix ("w" . "wrap"))
+          (:prefix ("3" . "ternary"))))
   :config
-  (when (featurep! :feature evil +everywhere)
+  (when (featurep! :editor evil +everywhere)
+    (add-hook 'js2-refactor-mode-hook #'evil-normalize-keymaps)
     (let ((js2-refactor-mode-map (evil-get-auxiliary-keymap js2-refactor-mode-map 'normal t t)))
       (js2r-add-keybindings-with-prefix (format "%s r" doom-localleader-key)))))
 
 
-(def-package! eslintd-fix
+(use-package! eslintd-fix
   :commands eslintd-fix
   :config
-  (defun +javascript|set-flycheck-executable-to-eslint ()
-    (setq flycheck-javascript-eslint-executable eslintd-fix-executable))
-  (add-hook 'eslintd-fix-mode-hook #'+javascript|set-flycheck-executable-to-eslint))
+  (setq-hook! 'eslintd-fix-mode-hook
+    flycheck-javascript-eslint-executable eslintd-fix-executable))
 
 
-;; `skewer-mode'
+;;;###package skewer-mode
 (map! :localleader
+      (:after js2-mode
+        :map js2-mode-map
+        :prefix ("s" . "skewer"))
       :prefix "s"
       (:after skewer-mode
         :map skewer-mode-map
@@ -213,28 +269,32 @@
         "e" #'skewer-html-eval-tag))
 
 
-;; `npm-mode'
-(map! :after npm-mode
-      :localleader
-      :map npm-mode-keymap
-      :prefix "n"
-      "n" #'npm-mode-npm-init
-      "i" #'npm-mode-npm-install
-      "s" #'npm-mode-npm-install-save
-      "d" #'npm-mode-npm-install-save-dev
-      "u" #'npm-mode-npm-uninstall
-      "l" #'npm-mode-npm-list
-      "r" #'npm-mode-npm-run
-      "v" #'npm-mode-visit-project-file)
+;;;###package npm-mode
+(use-package! npm-mode
+  :hook ((js-mode typescript-mode) . npm-mode)
+  :config
+  (map! (:localleader
+          :map npm-mode-keymap
+          "n" npm-mode-command-keymap)
+        (:after js2-mode
+          :map js2-mode-map
+          :localleader
+          (:prefix ("n" . "npm")))))
 
 
 ;;
-;; Projects
+;;; Projects
 
 (def-project-mode! +javascript-npm-mode
-  :modes (html-mode css-mode web-mode typescript-mode js2-mode rjsx-mode json-mode markdown-mode)
+  :modes '(html-mode
+           css-mode
+           web-mode
+           markdown-mode
+           js-mode
+           typescript-mode
+           solidity-mode)
   :when (locate-dominating-file default-directory "package.json")
-  :add-hooks (+javascript|add-node-modules-path npm-mode))
+  :add-hooks '(+javascript-add-node-modules-path-h npm-mode))
 
 (def-project-mode! +javascript-gulp-mode
   :when (locate-dominating-file default-directory "gulpfile.js"))

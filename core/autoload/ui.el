@@ -1,7 +1,7 @@
 ;;; core/autoload/ui.el -*- lexical-binding: t; -*-
 
 ;;
-;; Public library
+;;; Public library
 
 ;;;###autoload
 (defun doom-resize-window (window new-size &optional horizontal force-p)
@@ -24,32 +24,50 @@ are open."
 
 
 ;;
-;; Advice
+;;; Advice
 
 ;;;###autoload
-(defun doom*recenter (&rest _)
+(defun doom-recenter-a (&rest _)
   "Generic advisor for recentering window (typically :after other functions)."
   (recenter))
 
 ;;;###autoload
-(defun doom*shut-up (orig-fn &rest args)
-  "Generic advisor for silencing noisy functions."
+(defun doom-shut-up-a (orig-fn &rest args)
+  "Generic advisor for silencing noisy functions.
+
+In interactive Emacs, this just inhibits messages from appearing in the
+minibuffer. They are still logged to *Messages*.
+
+In tty Emacs, messages suppressed completely."
   (quiet! (apply orig-fn args)))
 
 
 ;;
-;; Hooks
+;;; Hooks
 
 ;;;###autoload
-(defun doom|apply-ansi-color-to-compilation-buffer ()
+(defun doom-apply-ansi-color-to-compilation-buffer-h ()
   "Applies ansi codes to the compilation buffers. Meant for
 `compilation-filter-hook'."
   (with-silent-modifications
     (ansi-color-apply-on-region compilation-filter-start (point))))
 
+;;;###autoload
+(defun doom-disable-show-paren-mode-h ()
+  "Turn off `show-paren-mode' buffer-locally."
+  (setq-local show-paren-mode nil))
+
+;;;###autoload
+(defun doom-enable-line-numbers-h ()
+  (display-line-numbers-mode +1))
+
+;;;###autoload
+(defun doom-disable-line-numbers-h ()
+  (display-line-numbers-mode -1))
+
 
 ;;
-;; Commands
+;;; Commands
 
 ;;;###autoload
 (defun doom/toggle-line-numbers ()
@@ -62,36 +80,19 @@ visual-line-mode is on, this skips relative and uses visual instead.
 See `display-line-numbers' for what these values mean."
   (interactive)
   (defvar doom--line-number-style display-line-numbers-type)
-  (let* ((styles `(t ,(if (and EMACS26+ visual-line-mode) 'visual 'relative) nil))
+  (let* ((styles `(t ,(if visual-line-mode 'visual 'relative) nil))
          (order (cons display-line-numbers-type (remq display-line-numbers-type styles)))
          (queue (memq doom--line-number-style order))
          (next (if (= (length queue) 1)
                    (car order)
                  (car (cdr queue)))))
     (setq doom--line-number-style next)
-    (if EMACS26+
-        (setq display-line-numbers next)
-      (pcase next
-        (`t (nlinum-relative-off) (nlinum-mode +1))
-        (`relative (nlinum-relative-on))
-        (`nil (nlinum-mode -1))))
+    (setq display-line-numbers next)
     (message "Switched to %s line numbers"
              (pcase next
                (`t "normal")
                (`nil "disabled")
                (_ (symbol-name next))))))
-
-;;;###autoload
-(defun doom/reload-theme ()
-  "Reset the current color theme and fonts."
-  (interactive)
-  (let ((theme (or (car-safe custom-enabled-themes) doom-theme)))
-    (when theme
-      (mapc #'disable-theme custom-enabled-themes))
-    (when (and doom-theme (not (memq doom-theme custom-enabled-themes)))
-      (let (doom--prefer-theme-elc)
-        (load-theme doom-theme t)))
-    (doom|init-fonts)))
 
 ;;;###autoload
 (defun doom/delete-frame ()
@@ -102,55 +103,66 @@ See `display-line-numbers' for what these values mean."
         (delete-frame))
     (save-buffers-kill-emacs)))
 
+(defvar doom--maximize-last-wconf nil)
 ;;;###autoload
-(defun doom/window-zoom ()
+(defun doom/window-maximize-buffer ()
   "Close other windows to focus on this one. Activate again to undo this. If the
 window changes before then, the undo expires.
 
 Alternatively, use `doom/window-enlargen'."
   (interactive)
-  (if (and (one-window-p)
-           (assq ?_ register-alist))
-      (jump-to-register ?_)
-    (window-configuration-to-register ?_)
-    (delete-other-windows)))
+  (setq doom--maximize-last-wconf
+        (if (and (null (cdr (cl-remove-if #'window-dedicated-p (window-list))))
+                 doom--maximize-last-wconf)
+            (ignore (set-window-configuration doom--maximize-last-wconf))
+          (when (and (bound-and-true-p +popup-mode)
+                     (+popup-window-p))
+            (user-error "Cannot maximize a popup, use `+popup/raise' first or use `doom/window-enlargen' instead"))
+          (prog1 (current-window-configuration)
+            (delete-other-windows)))))
 
-(defvar doom--window-enlargened nil)
+(defvar doom--enlargen-last-wconf nil)
 ;;;###autoload
 (defun doom/window-enlargen ()
   "Enlargen the current window to focus on this one. Does not close other
-windows (unlike `doom/window-zoom') Activate again to undo."
+windows (unlike `doom/window-maximize-buffer'). Activate again to undo."
   (interactive)
-  (setq doom--window-enlargened
-        (if (and doom--window-enlargened
-                 (assq ?_ register-alist))
-            (ignore (ignore-errors (jump-to-register ?_)))
-          (window-configuration-to-register ?_)
-          (if (window-dedicated-p)
-              ;; `window-resize' and `window-max-delta' don't respect
-              ;; `ignore-window-parameters', so we gotta force it to.
-              (cl-letf* ((old-window-resize (symbol-function #'window-resize))
-                         (old-window-max-delta (symbol-function #'window-max-delta))
-                         ((symbol-function #'window-resize)
-                          (lambda (window delta &optional horizontal _ignore pixelwise)
-                            (funcall old-window-resize window delta horizontal
-                                     t pixelwise)))
-                         ((symbol-function #'window-max-delta)
-                          (lambda (&optional window horizontal _ignore trail noup nodown pixelwise)
-                            (funcall old-window-max-delta window horizontal t
-                                     trail noup nodown pixelwise))))
-                (maximize-window))
-            (maximize-window))
-          t)))
+  (setq doom--enlargen-last-wconf
+        (if doom--enlargen-last-wconf
+            (ignore (set-window-configuration doom--enlargen-last-wconf))
+          (prog1 (current-window-configuration)
+            (let* ((window (selected-window))
+                   (dedicated-p (window-dedicated-p window))
+                   (preserved-p (window-parameter window 'window-preserved-size))
+                   (ignore-window-parameters t))
+              (unwind-protect
+                  (progn
+                    (when dedicated-p
+                      (set-window-dedicated-p window nil))
+                    (when preserved-p
+                      (set-window-parameter window 'window-preserved-size nil))
+                    (maximize-window window))
+                (set-window-dedicated-p window dedicated-p)
+                (when preserved-p
+                  (set-window-parameter window 'window-preserved-size preserved-p))))))))
 
 ;;;###autoload
-(defun doom/reload-font ()
-  "Reload `doom-font', `doom-variable-pitch-font', and `doom-unicode-font', if
-set."
+(defun doom/window-maximize-horizontally ()
+  "Delete all windows to the left and right of the current window."
   (interactive)
-  (when doom-font
-    (set-frame-font doom-font t))
-  (doom|init-fonts))
+  (require 'windmove)
+  (save-excursion
+    (while (ignore-errors (windmove-left)) (delete-window))
+    (while (ignore-errors (windmove-right)) (delete-window))))
+
+;;;###autoload
+(defun doom/window-maximize-vertically ()
+  "Delete all windows above and below the current window."
+  (interactive)
+  (require 'windmove)
+  (save-excursion
+    (while (ignore-errors (windmove-up)) (delete-window))
+    (while (ignore-errors (windmove-down)) (delete-window))))
 
 ;;;###autoload
 (defun doom/set-frame-opacity (opacity)
@@ -163,29 +175,66 @@ OPACITY is an integer between 0 to 100, inclusive."
                           100))))
   (set-frame-parameter nil 'alpha opacity))
 
+(defvar doom--narrowed-base-buffer nil)
+;;;###autoload
+(defun doom/narrow-buffer-indirectly (beg end)
+  "Restrict editing in this buffer to the current region, indirectly.
 
-;;
-;; Modes
+This recursively creates indirect clones of the current buffer so that the
+narrowing doesn't affect other windows displaying the same buffer. Call
+`doom/widen-indirectly-narrowed-buffer' to undo it (incrementally).
+
+Inspired from http://demonastery.org/2013/04/emacs-evil-narrow-region/"
+  (interactive
+   (list (or (bound-and-true-p evil-visual-beginning) (region-beginning))
+         (or (bound-and-true-p evil-visual-end)       (region-end))))
+  (unless (region-active-p)
+    (setq beg (line-beginning-position)
+          end (line-end-position)))
+  (deactivate-mark)
+  (let ((orig-buffer (current-buffer)))
+    (with-current-buffer (switch-to-buffer (clone-indirect-buffer nil nil))
+      (narrow-to-region beg end)
+      (setq-local doom--narrowed-base-buffer orig-buffer))))
 
 ;;;###autoload
-(define-minor-mode doom-big-font-mode
-  "A global mode that resizes the font, for streams, screen-sharing and
-presentations.
+(defun doom/widen-indirectly-narrowed-buffer (&optional arg)
+  "Widens narrowed buffers.
 
-Uses `doom-big-font' when enabled."
-  :init-value nil
-  :lighter " BIG"
-  :global t
-  (unless doom-big-font
-    (user-error "`doom-big-font' must be set to a valid font"))
-  (unless doom-font
-    (user-error "`doom-font' must be set to a valid font"))
-  (let ((doom-font (if doom-big-font-mode
-                       doom-big-font
-                     doom-font)))
-    (setf (alist-get 'font default-frame-alist)
-          (cond ((null doom-font))
-                ((stringp doom-font) doom-font)
-                ((fontp doom-font) (font-xlfd-name doom-font))
-                ((signal 'wrong-type-argument (list '(fontp stringp) doom-font)))))
-    (set-frame-font doom-font t t)))
+This command will incrementally kill indirect buffers (under the assumption they
+were created by `doom/narrow-buffer-indirectly') and switch to their base
+buffer.
+
+If ARG, then kill all indirect buffers, return the base buffer and widen it.
+
+If the current buffer is not an indirect buffer, it is `widen'ed."
+  (interactive "P")
+  (unless (buffer-narrowed-p)
+    (user-error "Buffer isn't narrowed"))
+  (let ((orig-buffer (current-buffer))
+        (base-buffer doom--narrowed-base-buffer))
+    (cond ((or (not base-buffer)
+               (not (buffer-live-p base-buffer)))
+           (widen))
+          (arg
+           (let ((buffer orig-buffer)
+                 (buffers-to-kill (list orig-buffer)))
+             (while (setq buffer (buffer-local-value 'doom--narrowed-base-buffer buffer))
+               (push buffer buffers-to-kill))
+             (switch-to-buffer (buffer-base-buffer))
+             (mapc #'kill-buffer (remove (current-buffer) buffers-to-kill))))
+          ((switch-to-buffer base-buffer)
+           (kill-buffer orig-buffer)))))
+
+;;;###autoload
+(defun doom/toggle-narrow-buffer (beg end)
+  "Narrow the buffer to BEG END. If narrowed, widen it."
+  (interactive
+   (list (or (bound-and-true-p evil-visual-beginning) (region-beginning))
+         (or (bound-and-true-p evil-visual-end)       (region-end))))
+  (if (buffer-narrowed-p)
+      (widen)
+    (unless (region-active-p)
+      (setq beg (line-beginning-position)
+            end (line-end-position)))
+    (narrow-to-region beg end)))

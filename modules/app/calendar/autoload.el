@@ -3,9 +3,9 @@
 (defvar +calendar--wconf nil)
 
 (defun +calendar--init ()
-  (if-let* ((win (cl-loop for win in (doom-visible-windows)
-                          if (string-match-p "^\\*cfw:" (buffer-name (window-buffer win)))
-                          return win)))
+  (if-let (win (cl-find-if (lambda (b) (string-match-p "^\\*cfw:" (buffer-name b)))
+                           (doom-visible-windows)
+                           :key #'window-buffer))
       (select-window win)
     (call-interactively +calendar-open-function)))
 
@@ -13,20 +13,22 @@
 (defun =calendar ()
   "Activate (or switch to) `calendar' in its workspace."
   (interactive)
-  (if (featurep! :feature workspaces)
+  (if (featurep! :ui workspaces)
       (progn
         (+workspace-switch "Calendar" t)
+        (doom/switch-to-scratch-buffer)
         (+calendar--init)
         (+workspace/display))
     (setq +calendar--wconf (current-window-configuration))
     (delete-other-windows)
+    (switch-to-buffer (doom-fallback-buffer))
     (+calendar--init)))
 
 ;;;###autoload
 (defun +calendar/quit ()
   "TODO"
   (interactive)
-  (if (featurep! :feature workspaces)
+  (if (featurep! :ui workspaces)
       (+workspace/delete "Calendar")
     (doom-kill-matching-buffers "^\\*cfw:")
     (set-window-configuration +calendar--wconf)
@@ -40,11 +42,11 @@
    ;; :custom-map cfw:my-cal-map
    :contents-sources
    (list
-    (cfw:org-create-source (doom-color 'fg))  ; orgmode source
+    (cfw:org-create-source (face-foreground 'default))  ; orgmode source
     )))
 
 ;;;###autoload
-(defun +calendar*cfw:render-button (title command &optional state)
+(defun +calendar-cfw:render-button-a (title command &optional state)
   "render-button
  TITLE
  COMMAND

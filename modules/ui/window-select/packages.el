@@ -1,12 +1,9 @@
 ;; -*- no-byte-compile: t; -*-
 ;;; ui/window-select/packages.el
 
-(cond ((featurep! +switch-window)
-       ;; Install switch-window if the user indicated the '+switch-window'
-       ;; module flag
-       (package! switch-window))
-      ((or (featurep! +ace-window) t)
-       ;; Install ace-window if the user selects the flag '+ace-window' or by
-       ;; default ... if the user did not specify a module flag
-       (package! ace-window)))
+(if (featurep! +switch-window)
+    (package! switch-window :pin "204f9fc1a3")
+  (package! ace-window :pin "7e0777b39a"))
 
+(when (featurep! +numbers)
+  (package! winum :pin "c5455e866e"))

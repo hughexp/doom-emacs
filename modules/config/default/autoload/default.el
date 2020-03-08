@@ -1,52 +1,6 @@
 ;; config/default/autoload/default.el -*- lexical-binding: t; -*-
 
 ;;;###autoload
-(defun +default/yank-buffer-filename ()
-  "Copy the current buffer's path to the kill ring."
-  (interactive)
-  (if-let* ((filename (or buffer-file-name (bound-and-true-p list-buffers-directory))))
-      (message (kill-new (abbreviate-file-name filename)))
-    (error "Couldn't find filename in current buffer")))
-
-;;;###autoload
-(defun +default/browse-project ()
-  (interactive) (doom-project-browse (doom-project-root)))
-;; NOTE No need for find-in-project, use `projectile-find-file'
-
-;;;###autoload
-(defun +default/browse-templates ()
-  (interactive) (doom-project-browse +file-templates-dir))
-;;;###autoload
-(defun +default/find-in-templates ()
-  (interactive) (doom-project-find-file +file-templates-dir))
-
-;;;###autoload
-(defun +default/browse-emacsd ()
-  (interactive) (doom-project-browse doom-emacs-dir))
-;;;###autoload
-(defun +default/find-in-emacsd ()
-  (interactive) (doom-project-find-file doom-emacs-dir))
-
-;;;###autoload
-(defun +default/browse-notes ()
-  (interactive) (doom-project-browse org-directory))
-;;;###autoload
-(defun +default/find-in-notes ()
-  (interactive) (doom-project-find-file org-directory))
-
-;;;###autoload
-(defun +default/find-in-config ()
-  "Open a file somewhere in `doom-private-dir' via a fuzzy filename search."
-  (interactive)
-  (doom-project-find-file doom-private-dir))
-
-;;;###autoload
-(defun +default/browse-config ()
-  "Browse the files in `doom-private-dir'."
-  (interactive)
-  (doom-project-browse doom-private-dir))
-
-;;;###autoload
 (defun +default/compile (arg)
   "Runs `compile' from the root of the current project.
 
@@ -72,9 +26,6 @@ If ARG (universal argument), runs `compile' from the current directory."
      #'woman)))
 
 ;;;###autoload
-(defalias '+default/newline #'newline)
-
-;;;###autoload
 (defun +default/new-buffer ()
   "TODO"
   (interactive)
@@ -86,27 +37,21 @@ If ARG (universal argument), runs `compile' from the current directory."
         (funcall (default-value 'major-mode))))))
 
 ;;;###autoload
-(defun +default/project-tasks ()
-  "Invokes `+ivy/tasks' or `+helm/tasks', depending on which is available."
+(defun +default/lsp-format-region-or-buffer ()
+  "Format the buffer (or selection) with LSP."
   (interactive)
-  (cond ((featurep! :completion ivy) (+ivy/tasks)
-         (featurep! :completion helm) (+helm/tasks))))
+  (unless (bound-and-true-p lsp-mode)
+    (user-error "Not in an LSP buffer"))
+  (call-interactively
+   (if (doom-region-active-p)
+       #'lsp-format-region
+     #'lsp-format-buffer)))
 
 ;;;###autoload
-(defun +default/newline-above ()
-  "Insert an indented new line before the current one."
+(defun +default/restart-server ()
+  "Restart the Emacs server."
   (interactive)
-  (if (featurep 'evil)
-      (call-interactively 'evil-open-above)
-    (beginning-of-line)
-    (save-excursion (newline))
-    (indent-according-to-mode)))
-
-;;;###autoload
-(defun +default/newline-below ()
-  "Insert an indented new line after the current one."
-  (interactive)
-  (if (featurep 'evil)
-      (call-interactively 'evil-open-below)
-    (end-of-line)
-    (newline-and-indent)))
+  (server-force-delete)
+  (while (server-running-p)
+    (sleep-for 1))
+  (server-start))

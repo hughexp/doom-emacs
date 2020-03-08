@@ -1,6 +1,6 @@
 ;;; editor/parinfer/config.el -*- lexical-binding: t; -*-
 
-(def-package! parinfer
+(use-package! parinfer
   :hook ((emacs-lisp-mode clojure-mode scheme-mode lisp-mode) . parinfer-mode)
   :init
   (setq parinfer-extensions
@@ -8,7 +8,7 @@
           pretty-parens
           smart-tab
           smart-yank))
-  (when (featurep! :feature evil +everywhere)
+  (when (featurep! :editor evil +everywhere)
     (push 'evil parinfer-extensions))
   :config
   (map! :map parinfer-mode-map
