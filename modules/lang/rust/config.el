@@ -12,9 +12,9 @@
   :commands rustic-run-cargo-command rustic-cargo-outdated
   :config
   (set-docsets! 'rustic-mode "Rust")
+  (set-popup-rule! "^\\*rustic-compilation" :vslot -1)
 
   (setq rustic-indent-method-chain t
-        rustic-flycheck-setup-mode-line-p nil
         ;; use :editor format instead
         rustic-format-trigger nil
         ;; REVIEW `rust-ordinary-lt-gt-p' is terribly expensive in large rust

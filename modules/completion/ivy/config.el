@@ -267,7 +267,7 @@ evil-ex-specific constructs, so we disable it solely in evil-ex."
         (cond ((executable-find doom-projectile-fd-binary)
                (cons doom-projectile-fd-binary (list "-t" "f" "-E" ".git")))
               ((executable-find "rg")
-               (cons "rg" (list "--files" "--hidden" "--no-messages")))
+               (split-string (format counsel-rg-base-command "--files --no-messages") " " t))
               ((cons find-program args)))
       (unless (listp args)
         (user-error "`counsel-file-jump-args' is a list now, please customize accordingly."))
@@ -303,7 +303,10 @@ evil-ex-specific constructs, so we disable it solely in evil-ex."
         #'+ivy/projectile-find-file)
 
   ;; no highlighting visited files; slows down the filtering
-  (ivy-set-display-transformer #'counsel-projectile-find-file nil))
+  (ivy-set-display-transformer #'counsel-projectile-find-file nil)
+
+  (if (featurep! +prescient)
+      (setq counsel-projectile-sort-files t)))
 
 
 (use-package! wgrep
@@ -347,10 +350,13 @@ evil-ex-specific constructs, so we disable it solely in evil-ex."
   (setq prescient-filter-method
         (if (featurep! +fuzzy)
             '(literal regexp initialism fuzzy)
-          '(literal regexp initialism))
-        ivy-prescient-retain-classic-highlighting t)
-
+          '(literal regexp initialism)))
   :config
+  (setq ivy-prescient-sort-commands
+        '(:not swiper swiper-isearch ivy-switch-buffer counsel-grep
+               counsel-git-grep counsel-ag counsel-rg counsel-imenu
+               counsel-yank-pop counsel-recentf counsel-buffer-or-recentf)
+        ivy-prescient-retain-classic-highlighting t)
   (defun +ivy-prescient-non-fuzzy (str)
     (let ((prescient-filter-method '(literal regexp)))
       (ivy-prescient-re-builder str)))
