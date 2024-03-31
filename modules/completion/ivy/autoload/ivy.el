@@ -35,22 +35,6 @@ Buffers that are considered unreal (see `doom-real-buffer-p') are dimmed with
           (candidate))))
 
 ;;;###autoload
-(defun +ivy-rich-buffer-icon (candidate)
-  "Display the icon for CANDIDATE buffer."
-  ;; NOTE This is inspired by `all-the-icons-ivy-buffer-transformer', minus the
-  ;; buffer name and extra padding as those are handled by `ivy-rich'.
-  (propertize "\t" 'display
-              (if-let* ((buffer (get-buffer candidate))
-                        (mode (buffer-local-value 'major-mode buffer)))
-                  (or
-                   (all-the-icons-ivy--icon-for-mode mode)
-                   (all-the-icons-ivy--icon-for-mode (get mode 'derived-mode-parent))
-                   (funcall
-                    all-the-icons-ivy-family-fallback-for-buffer
-                    all-the-icons-ivy-name-fallback-for-buffer))
-                (all-the-icons-icon-for-file candidate))))
-
-;;;###autoload
 (defun +ivy-rich-describe-variable-transformer (cand)
   "Previews the value of the variable in the minibuffer"
   (let* ((sym (intern cand))
@@ -272,7 +256,8 @@ The point of this is to avoid Emacs locking up indexing massive file trees."
          (directory (or in project-root))
          (args (concat (if all-files " -uu")
                        (unless recursive " --maxdepth 1")
-                       " " (mapconcat #'shell-quote-argument args " "))))
+                       " --hidden -g!.git "
+                       (mapconcat #'shell-quote-argument args " "))))
     (setq deactivate-mark t)
     (counsel-rg
      (or query
@@ -280,7 +265,7 @@ The point of this is to avoid Emacs locking up indexing massive file trees."
            (replace-regexp-in-string
             "[! |]" (lambda (substr)
                       (cond ((and (string= substr " ")
-                                  (not (featurep! +fuzzy)))
+                                  (not (modulep! +fuzzy)))
                              "  ")
                             ((string= substr "|")
                              "\\\\\\\\|")
@@ -288,13 +273,13 @@ The point of this is to avoid Emacs locking up indexing massive file trees."
             (rxt-quote-pcre (doom-thing-at-point-or-region)))))
      directory args
      (or prompt
-         (format "rg%s [%s]: "
-                 args
+         (format "Search project [%s]: "
                  (cond ((equal directory default-directory)
                         "./")
                        ((equal directory project-root)
                         (projectile-project-name))
-                       ((file-relative-name directory project-root))))))))
+                       ((file-relative-name directory project-root)))
+                 (string-trim args))))))
 
 ;;;###autoload
 (defun +ivy/project-search (&optional arg initial-query directory)
@@ -321,7 +306,11 @@ If ARG (universal argument), include all files, even hidden or compressed ones."
 (defun +ivy/compile ()
   "Execute a compile command from the current buffer's directory."
   (interactive)
-  (counsel-compile default-directory))
+  ;; Fix unhelpful 'Couldn't find project root' error
+  (letf! (defun counsel--compile-root ()
+           (ignore-errors
+             (funcall counsel--compile-root)))
+    (counsel-compile default-directory)))
 
 ;;;###autoload
 (defun +ivy/project-compile ()

@@ -1,13 +1,19 @@
 ;; -*- no-byte-compile: t; -*-
 ;;; tools/lsp/packages.el
 
-(if (featurep! +eglot)
+(if (modulep! +eglot)
     (progn
-      (package! eglot :pin "61b71ea769fa14887465517f70832861f7052816")
-      (package! project :pin "da0333a697b18f0a863c1b1523d2fc7991b31174"))
-  (package! lsp-mode :pin "fb4c35c6978415c4cf52f85230b527d311989063")
-  (package! lsp-ui :pin "25552041f5af110c282fe8a2c714dec0f7a2320e")
-  (when (featurep! :completion ivy)
-    (package! lsp-ivy :pin "20cac6296e5038b7131ee6f34a96635f1d30fe3c"))
-  (when (featurep! :completion helm)
-    (package! helm-lsp :pin "fc09aa0903ee6abe4955e9a6062dcea667ebff5a")))
+      (package! eglot :pin "24f2bf7b28c33e1d677b547956ade5560d27f55f")
+      (when (modulep! :completion vertico)
+        (package! consult-eglot :pin "049c6319b8a48ff66189d49592c7759f0b356596"))
+      (when (and (modulep! :checkers syntax)
+             (not (modulep! :checkers syntax +flymake)))
+        (package! flycheck-eglot :pin "114e1315aaf0dc3196da67da426bbe2b46384fe2")))
+  (package! lsp-mode :pin "a5f5ca9a8a4b2ceaf236457bf2524f94c183c2f2")
+  (package! lsp-ui :pin "bc58c6664577d1d79060c6b32b7ad20e70ee19d0")
+  (when (modulep! :completion ivy)
+    (package! lsp-ivy :pin "9ecf4dd9b1207109802bd1882aa621eb1c385106"))
+  (when (modulep! :completion helm)
+    (package! helm-lsp :pin "c2c6974dadfac459b1a69a1217441283874cea92"))
+  (when (modulep! :completion vertico)
+    (package! consult-lsp :pin "f8db3252c0daa41225ba4ed1c0d178b281cd3e90")))

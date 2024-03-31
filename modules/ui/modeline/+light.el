@@ -11,7 +11,7 @@
 (defun +modeline--set-var-and-refresh-bars-fn (&optional symbol value)
   (when symbol
     (set-default symbol value))
-  (when doom-init-time
+  (when (fboundp '+modeline-refresh-bars-h)
     (+modeline-refresh-bars-h)))
 
 
@@ -109,14 +109,21 @@ side of the modeline, and whose CDR is the right-hand side.")
                                  (if (eq idx len) "\"};" "\",\n")))))
         'xpm t :ascent 'center)))))
 
-(defun +modeline-format-icon (icon label &optional face help-echo voffset)
-  (propertize (concat (all-the-icons-material
-                       icon
-                       :face face
-                       :height 1.1
-                       :v-adjust (or voffset -0.225))
-                      (propertize label 'face face))
-              'help-echo help-echo))
+(defun +modeline-format-icon (icon-set icon label &optional face help-echo voffset)
+  "Build from ICON-SET the ICON with LABEL.
+Using optionals attributes FACE, HELP-ECHO and VOFFSET."
+  (let ((icon-set-fn (pcase icon-set
+                       ('octicon #'nerd-icons-octicon)
+                       ('faicon #'nerd-icons-faicon)
+                       ('codicon #'nerd-icons-codicon)
+                       ('material #'nerd-icons-mdicon))))
+    (propertize (concat (funcall icon-set-fn
+                                 icon
+                                 :face face
+                                 :height 1.1
+                                 :v-adjust (or voffset -0.225))
+                        (propertize label 'face face))
+                'help-echo help-echo)))
 
 (defun set-modeline! (name &optional default)
   "Set the modeline to NAME.
@@ -135,7 +142,7 @@ If DEFAULT is non-nil, apply to all future buffers. Modelines are defined with
   "Set the modeline to NAME on HOOKS.
 See `def-modeline!' on how modelines are defined."
   (let ((fn (intern (format "+modeline-set-%s-format-h" name))))
-    (dolist (hook (doom-enlist hooks))
+    (dolist (hook (ensure-list hooks))
       (when after-init-time
         (dolist (name (mapcar #'car +modeline-format-alist))
           (remove-hook hook (intern (format "+modeline-set-%s-format-h" name)))))
@@ -234,7 +241,7 @@ LHS and RHS will accept."
           anzu--last-isearch-string anzu--overflow-p)))
 
 (use-package! evil-anzu
-  :when (featurep! :editor evil)
+  :when (modulep! :editor evil)
   :after-call evil-ex-start-search evil-ex-start-word-search evil-ex-search-activate-highlight
   :config (global-anzu-mode +1))
 
@@ -282,7 +289,7 @@ Requires `anzu', also `evil-anzu' if using `evil-mode' for compatibility with
                           (evil-mc-frozen 'doom-modeline-highlight)
                           ('doom-modeline-alternate-highlight))))
           (concat (propertize " " 'face face)
-                  (all-the-icons-faicon "i-cursor" :face face :v-adjust -0.0575)
+                  (nerd-icons-faicon "nf-fa-i_cursor" :face face :v-adjust -0.0575)
                   (propertize " " 'face `(:inherit (variable-pitch ,face)))
                   (propertize (format "%d " count)
                               'face face)))))))
@@ -324,7 +331,7 @@ Requires `anzu', also `evil-anzu' if using `evil-mode' for compatibility with
                             "Macro")
                           'face 'doom-modeline-highlight)
               sep
-              (all-the-icons-octicon "triangle-right"
+              (nerd-icons-octicon "nf-oct-triangle_right"
                                      :face 'doom-modeline-highlight
                                      :v-adjust -0.05)
               sep))))
@@ -410,7 +417,7 @@ Requires `anzu', also `evil-anzu' if using `evil-mode' for compatibility with
                    (let ((error (or .error 0))
                          (warning (or .warning 0))
                          (info (or .info 0)))
-                     (+modeline-format-icon "do_not_disturb_alt"
+                     (+modeline-format-icon 'codicon "nf-cod-error"
                                             (number-to-string (+ error warning info))
                                             (cond ((> error 0)   'error)
                                                   ((> warning 0) 'warning)
@@ -419,11 +426,12 @@ Requires `anzu', also `evil-anzu' if using `evil-mode' for compatibility with
                                                     error
                                                     warning
                                                     info))))
-               (+modeline-format-icon "check" "" 'success)))
-            (`running     (+modeline-format-icon "access_time" "*" 'mode-line-inactive "Running..."))
-            (`errored     (+modeline-format-icon "sim_card_alert" "!" 'error "Errored!"))
-            (`interrupted (+modeline-format-icon "pause" "!" 'mode-line-inactive "Interrupted"))
-            (`suspicious  (+modeline-format-icon "priority_high" "!" 'error "Suspicious"))))))
+               (+modeline-format-icon 'material "nf-md-check" "" 'success)))
+            (`running     (+modeline-format-icon 'faicon "nf-fa-hourglass" "*" 'mode-line-inactive "Running..."))
+            (`errored     (+modeline-format-icon 'material "nf-md-sim_alert" "!" 'error "Errored!"))
+            (`interrupted (+modeline-format-icon 'material "nf-md-pause" "!" 'mode-line-inactive "Interrupted"))
+            (`suspicious  (+modeline-format-icon 'material "nf-md-priority_high" "!" 'error "Suspicious"))))))
+
 
 
 ;;; `+modeline-selection-info'
@@ -481,7 +489,7 @@ lines are selected, or the NxM dimensions of a block selection.")
   `(:eval
     (let ((sys (coding-system-plist buffer-file-coding-system))
           (eol (coding-system-eol-type-mnemonic buffer-file-coding-system)))
-      (concat (unless (equal eol ,(if IS-WINDOWS "CRLF" "LF"))
+      (concat (unless (equal eol ,(if (featurep :system 'windows) "CRLF" "LF"))
                 (concat "  " eol " "))
               (if (memq (plist-get sys :category)
                         '(coding-category-undecided coding-category-utf-8))
@@ -489,6 +497,19 @@ lines are selected, or the NxM dimensions of a block selection.")
                     "UTF-8  ")
                 (concat (upcase (symbol-name (plist-get sys :name)))
                         "  "))))))
+
+(def-modeline-var! +modeline-pdf-page nil
+  "Display page number of pdf"
+  :local t)
+
+(defun +modeline-update-pdf-pages ()
+  "Update PDF pages."
+  (setq +modeline-pdf-page
+        (format "  P%d/%d "
+                (eval `(pdf-view-current-page))
+                (pdf-cache-number-of-pages))))
+
+(add-hook 'pdf-view-change-page-hook #'+modeline-update-pdf-pages)
 
 ;; Clearer mnemonic labels for EOL styles
 (setq eol-mnemonic-dos "CRLF"
@@ -510,7 +531,7 @@ lines are selected, or the NxM dimensions of a block selection.")
     mode-line-misc-info
     +modeline-modes
     (vc-mode ("  "
-              ,(all-the-icons-octicon "git-branch" :v-adjust 0.0)
+              ,(nerd-icons-octicon "nf-oct-git_branch" :v-adjust 0.0)
               vc-mode " "))
     "  "
     +modeline-encoding
@@ -518,8 +539,8 @@ lines are selected, or the NxM dimensions of a block selection.")
 
 (def-modeline! 'project
   `(" "
-    ,(all-the-icons-octicon
-      "file-directory"
+    ,(nerd-icons-octicon
+      "nf-oct-file_directory"
       :face 'bold
       :v-adjust -0.06
       :height 1.1)
@@ -532,15 +553,22 @@ lines are selected, or the NxM dimensions of a block selection.")
     " " +modeline-buffer-identification)
   '("" +modeline-modes))
 
-;; (def-modeline! pdf
-;;   '("" +modeline-matches))
+(def-modeline! 'pdf
+  '(""
+    +modeline-matches
+    " "
+    +modeline-buffer-identification
+    +modeline-pdf-page)
+  `(""
+    +modeline-modes
+    "  "))
 ;; TODO (def-modeline! helm ...)
 
 
 ;; Other modes
 (set-modeline! :main 'default)
 (set-modeline-hook! '+doom-dashboard-mode-hook 'project)
-;; (set-modeline-hook! 'pdf-tools-enabled-hook 'pdf)
+(set-modeline-hook! 'pdf-tools-enabled-hook 'pdf)
 (set-modeline-hook! '(special-mode-hook
                       image-mode-hook
                       circe-mode-hook)

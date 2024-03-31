@@ -2,14 +2,16 @@
 
 ;;;###autoload
 (with-eval-after-load 'rotate-text
-  (add-to-list 'rotate-text-words '("true" "false")))
+  (pushnew! rotate-text-words
+            '("true" "false")
+            '("enable" "disable")))
 
 ;;;###autodef
 (cl-defun set-rotate-patterns! (modes &key symbols words patterns)
   "Declare :symbols, :words or :patterns (all lists of strings) that
 `rotate-text' will cycle through."
   (declare (indent defun))
-  (dolist (mode (doom-enlist modes))
+  (dolist (mode (ensure-list modes))
     (let ((fn-name (intern (format "+rotate-text-init-%s-h" mode))))
       (fset fn-name
             (lambda ()

@@ -4,13 +4,14 @@
 
 [Install](#install) • [Documentation] • [FAQ] • [Screenshots] • [Contribute](#contribute)
 
-![Made with Doom Emacs](https://img.shields.io/github/tag/hlissner/doom-emacs.svg?style=flat-square&label=release&color=58839b)
-![Supports Emacs 26-27](https://img.shields.io/badge/Supports-Emacs_26.1_--_27.x-blueviolet.svg?style=flat-square&logo=GNU%20Emacs&logoColor=white)
-![Latest commit](https://img.shields.io/github/last-commit/hlissner/doom-emacs/develop?style=flat-square)
-![Build status: develop](https://img.shields.io/github/workflow/status/hlissner/doom-emacs/CI/develop?style=flat-square)
-[![Discord Server](https://img.shields.io/discord/406534637242810369?color=blue&label=Discord%20Chat&logo=discord&logoColor=white&style=flat-square)][Discord]
+![Made with Doom Emacs](https://img.shields.io/github/tag/doomemacs/doomemacs.svg?style=flat-square&label=release&color=58839b)
+![Supports Emacs 27.1–29.2](https://img.shields.io/badge/Supports-Emacs_27.1–29.2-blueviolet.svg?style=flat-square&logo=GNU%20Emacs&logoColor=white)
+![Latest commit](https://img.shields.io/github/last-commit/doomemacs/doomemacs/master?style=flat-square)
+![Build status: master](https://img.shields.io/github/workflow/status/doomemacs/doomemacs/CI/master?style=flat-square)
+[![Discord Server](https://img.shields.io/discord/406534637242810369?color=738adb&label=Discord&logo=discord&logoColor=white&style=flat-square)][Discord]
+[![Discourse server](https://img.shields.io/discourse/users?server=https%3A%2F%2Fdiscourse.doomemacs.org&logo=discourse&label=Discourse&style=flat-square&color=9cf)][Discourse]
 
-![Doom Emacs Screenshot](https://raw.githubusercontent.com/hlissner/doom-emacs/screenshots/main.png)
+![Doom Emacs Screenshot](https://raw.githubusercontent.com/doomemacs/doomemacs/screenshots/main.png)
 
 </div>
 
@@ -28,7 +29,7 @@
 
 # Introduction
 <a href="http://ultravioletbat.deviantart.com/art/Yay-Evil-111710573">
-  <img src="https://raw.githubusercontent.com/hlissner/doom-emacs/screenshots/cacochan.png" align="right" />
+  <img src="https://raw.githubusercontent.com/doomemacs/doomemacs/screenshots/cacochan.png" align="right" />
 </a>
 
 > It is a story as old as time. A stubborn, shell-dwelling, and melodramatic
@@ -97,27 +98,35 @@ Check out [the FAQ][FAQ] for answers to common questions about the project.
 
 
 # Prerequisites
-+ Git 2.23+
-+ Emacs 26.1+ (*27 is recommended*) with GNUTLS support
-+ [ripgrep] 11.0+
-+ GNU `find`
-+ *OPTIONAL:* [fd] 7.3.0+ (improves file indexing performance for some commands)
-  
-Doom is comprised of [~150 optional modules][Modules], some of which may have
-additional dependencies. [Visit their documentation][Modules] or run `bin/doom
-doctor` to check for any that you may have missed.
+- Git 2.23+
+- Emacs 27.1–29.2 (**Recommended: 29.2 +
+  [native-comp](https://www.emacswiki.org/emacs/GccEmacs)**)
+- [ripgrep] 11.0+
+- GNU `find`
+- *OPTIONAL:* [fd] 7.3.0+ (improves file indexing performance for some commands)
+
+> [!WARNING]
+> Unstable and pre-release builds of Emacs -- which end in `.50`, `.60`, or
+> `.9X` (e.g. `28.1.91`) -- **are not officially supported**. There *is* some
+> effort to support Emacs HEAD, however. [Follow this Discourse
+> post](https://discourse.doomemacs.org/t/3241) for details.
+ 
+> [!IMPORTANT]
+> Doom is comprised of [~150 optional modules][Modules], some of which may have
+> additional dependencies. [Visit their documentation][Modules] or run `bin/doom
+> doctor` to check for any that you may have missed.
 
 
 # Install
 ``` sh
-git clone --depth 1 https://github.com/hlissner/doom-emacs ~/.emacs.d
-~/.emacs.d/bin/doom install
+git clone --depth 1 https://github.com/doomemacs/doomemacs ~/.config/emacs
+~/.config/emacs/bin/doom install
 ```
 
 Then [read our Getting Started guide][getting-started] to be walked through
 installing, configuring and maintaining Doom Emacs.
 
-It's a good idea to add `~/.emacs.d/bin` to your `PATH`! Other `bin/doom`
+It's a good idea to add `~/.config/emacs/bin` to your `PATH`! Other `bin/doom`
 commands you should know about:
 
 + `doom sync` to synchronize your private config with Doom by installing missing
@@ -129,8 +138,6 @@ commands you should know about:
 + `doom env` to dump a snapshot of your shell environment to a file that Doom
   will load at startup. This allows Emacs to inherit your `PATH`, among other
   things.
-+ `doom build` to recompile all installed packages (use this if you up/downgrade
-  Emacs).
 
 
 # Roadmap
@@ -138,13 +145,13 @@ Doom is an active and ongoing project. To make that development more
 transparent, its roadmap (and other concerns) are published across three github
 project boards and a newsletter:
 
-+ [Development Roadmap](https://github.com/hlissner/doom-emacs/projects/3):
++ [Development Roadmap](https://discourse.doomemacs.org/t/development-roadmap/42):
   roughly outlines our goals between release milestones and their progress.
-+ [Plugins under review](https://github.com/hlissner/doom-emacs/projects/2):
++ [Plugins under review](https://github.com/orgs/doomemacs/projects/5):
   lists plugins we are watching and considering for inclusion, and what their
   status for inclusion is. Please consult this list before requesting new
   packages/features.
-+ [Upstream bugs](https://github.com/hlissner/doom-emacs/projects/5): lists
++ [Upstream bugs](https://github.com/orgs/doomemacs/projects/7): lists
   issues that originate from elsewhere, and whether or not we have local
   workarounds or temporary fixes for them.
 + ~~Doom's newsletter~~ (not finished) will contain changelogs in between
@@ -175,8 +182,9 @@ mysterious errors. When you do, here are some places you can look for help:
   + To search available keybinds: <kbd>SPC h b b</kbd> or <kbd>C-h b b</kbd>
 + Run `bin/doom doctor` to detect common issues with your development
   environment and private config.
-+ Check out the [FAQ], in case your question has already been answered.
-+ Search [Doom's issue tracker](https://github.com/hlissner/doom-emacs/issues) in case your issue was already
++ Check out the [FAQ] or [Discourse FAQs][discourse-faq], in case your question
+  has already been answered.
++ Search [Doom's issue tracker](https://github.com/doomemacs/doomemacs/issues) in case your issue was already
   reported.
 + Hop on [our Discord server][discord]; it's active and friendly! Keep an eye on
   the #announcements channel, where I announce breaking updates and releases.
@@ -195,7 +203,7 @@ kind!
 + I :heart: pull requests and bug reports (see the [Contributing
   Guidelines][contribute])!
 + Don't hesitate to [tell me my Elisp-fu
-  sucks](https://github.com/hlissner/doom-emacs/issues/new), but please tell me
+  sucks](https://github.com/doomemacs/doomemacs/issues/new), but please tell me
   why.
 + Hop on [our Discord server][Discord] and say hi! Help others, hang out or talk
   to me about Emacs, gamedev, programming, physics, pixel art, anime, gaming --
@@ -204,21 +212,14 @@ kind!
   [liberapay] or [paypal]. My work contends with studies, adventures in indie
   gamedev and freelance work. Donations help me allocate more time to my Emacs
   and OSS capers.
-  
-[![](https://sourcerer.io/fame/hlissner/hlissner/doom-emacs/images/0)](https://sourcerer.io/fame/hlissner/hlissner/doom-emacs/links/0)
-[![](https://sourcerer.io/fame/hlissner/hlissner/doom-emacs/images/1)](https://sourcerer.io/fame/hlissner/hlissner/doom-emacs/links/1)
-[![](https://sourcerer.io/fame/hlissner/hlissner/doom-emacs/images/2)](https://sourcerer.io/fame/hlissner/hlissner/doom-emacs/links/2)
-[![](https://sourcerer.io/fame/hlissner/hlissner/doom-emacs/images/3)](https://sourcerer.io/fame/hlissner/hlissner/doom-emacs/links/3)
-[![](https://sourcerer.io/fame/hlissner/hlissner/doom-emacs/images/4)](https://sourcerer.io/fame/hlissner/hlissner/doom-emacs/links/4)
-[![](https://sourcerer.io/fame/hlissner/hlissner/doom-emacs/images/5)](https://sourcerer.io/fame/hlissner/hlissner/doom-emacs/links/5)
-[![](https://sourcerer.io/fame/hlissner/hlissner/doom-emacs/images/6)](https://sourcerer.io/fame/hlissner/hlissner/doom-emacs/links/6)
-[![](https://sourcerer.io/fame/hlissner/hlissner/doom-emacs/images/7)](https://sourcerer.io/fame/hlissner/hlissner/doom-emacs/links/7)
 
 
 [contribute]: docs/contributing.org
-[discord]: https://discord.gg/qvGgnVx
+[discord]: https://doomemacs.org/discord
+[discourse]: https://discourse.doomemacs.org
+[discourse-faq]: https://discourse.doomemacs.org/tag/faq
 [documentation]: docs/index.org
-[faq]: docs/faq.org
+[faq]: https://github.com/hlissner/doom-emacs/blob/master/docs/faq.org
 [getting-started]: docs/getting_started.org
 [install]: docs/getting_started.org#install
 [backtrace]: docs/getting_started.org#how-to-extract-a-backtrace-from-an-error
@@ -230,7 +231,7 @@ kind!
 [change-font]: docs/faq.org#how-do-i-change-the-fonts
 [modules]: docs/modules.org
 [popup-system]: modules/ui/popup/README.org
-[screenshots]: https://github.com/hlissner/doom-emacs/tree/screenshots#emacsd-screenshots
+[screenshots]: https://github.com/doomemacs/doomemacs/tree/screenshots#emacsd-screenshots
 
 [bindings]: modules/config/default/+evil-bindings.el
 [editorconfig]: http://editorconfig.org/
@@ -244,7 +245,7 @@ kind!
 [nix]: https://nixos.org
 [ported-vim-plugins]: modules/editor/evil/README.org#ported-vim-plugins
 [ripgrep]: https://github.com/BurntSushi/ripgrep
-[straight.el]: https://github.com/raxod502/straight.el
+[straight.el]: https://github.com/radian-software/straight.el
 [vim-easymotion]: https://github.com/easymotion/vim-easymotion
 [vim-lion]: https://github.com/tommcdo/vim-lion
 [vim-sneak]: https://github.com/justinmk/vim-sneak

@@ -20,7 +20,9 @@ If there are conflicting keys across the two camps, the built-in ones are
 ignored. This makes it easy to override built-in snippets with private ones."
   (when (eq this-command 'yas-expand)
     (let* ((gc-cons-threshold most-positive-fixnum)
-           (choices (cl-remove-duplicates choices :test #'+snippets--remove-p)))
+           (choices (condition-case _
+                        (cl-remove-duplicates choices :test #'+snippets--remove-p)
+                      (wrong-type-argument choices))))
       (if (cdr choices)
           (cl-loop for fn in (cdr (memq '+snippets-prompt-private yas-prompt-functions))
                    if (funcall fn prompt choices display-fn)
@@ -31,28 +33,48 @@ ignored. This makes it easy to override built-in snippets with private ones."
   (unless (file-directory-p dir)
     (if (y-or-n-p (format "%S doesn't exist. Create it?" (abbreviate-file-name dir)))
         (make-directory dir t)
-      (error "%S doesn't exist" (abbreviate-file-name dir)))))
+      (error "%S doesn't exist" (abbreviate-file-name dir))))
+  dir)
+
+(defun +snippets--use-snippet-file-name-p (snippet-file-name)
+  (or (not (file-exists-p snippet-file-name))
+      (y-or-n-p (format "%s exists. Overwrite it?"
+                        (abbreviate-file-name snippet-file-name)))))
+
+(defun +snippet--get-template-by-uuid (uuid &optional mode)
+  "Look up the template by uuid in child-most to parent-most mode order.
+Finds correctly active snippets from parent modes (based on Yas' logic)."
+  (cl-loop with mode = (or mode major-mode)
+           for active-mode in (yas--modes-to-activate mode)
+           if (gethash active-mode yas--tables)
+           if (gethash uuid (yas--table-uuidhash it))
+           return it))
 
 (defun +snippet--completing-read-uuid (prompt all-snippets &rest args)
-  (plist-get
-   (text-properties-at
-    0 (apply #'completing-read prompt
-             (cl-loop for (_ . tpl) in (mapcan #'yas--table-templates (if all-snippets
-                                                                          (hash-table-values yas--tables)
-                                                                        (yas--get-snippet-tables)))
+  (let* ((completion-uuid-alist
+          (cl-loop for (_ . tpl) in (mapcan #'yas--table-templates
+                                            (if all-snippets
+                                                (hash-table-values yas--tables)
+                                              (yas--get-snippet-tables)))
 
-                      for txt = (format "%-25s%-30s%s"
-                                        (yas--template-key tpl)
-                                        (yas--template-name tpl)
-                                        (abbreviate-file-name (yas--template-load-file tpl)))
-                      collect
-                      (progn
-                        (set-text-properties 0 (length txt) `(uuid ,(yas--template-name tpl)
-                                                                   path ,(yas--template-load-file tpl))
-                                             txt)
-                        txt))
-             args))
-   'uuid))
+                   for txt = (format "%-25s%-30s%s"
+                                     (yas--template-key tpl)
+                                     (yas--template-name tpl)
+                                     (abbreviate-file-name (yas--template-load-file tpl)))
+                   collect
+                   (cons txt (yas--template-uuid tpl))))
+         (completion (apply #'completing-read prompt completion-uuid-alist args)))
+    (alist-get completion completion-uuid-alist nil nil #'string=)))
+
+(defun +snippets--snippet-mode-name-completing-read (&optional all-modes)
+  (cond (all-modes (completing-read
+                    "Select snippet mode: "
+                    obarray
+                    (lambda (sym)
+                      (string-match-p "-mode\\'" (symbol-name sym)))))
+        ((not (null yas--extra-modes)) (completing-read "Select snippet mode: "
+                                                        (cons major-mode yas--extra-modes)))
+        (t (symbol-name major-mode))))
 
 (defun +snippet--abort ()
   (interactive)
@@ -169,9 +191,9 @@ buggy behavior when <delete> is pressed in an empty field."
   (interactive
    (list
     (+snippet--completing-read-uuid "Visit snippet: " current-prefix-arg)))
-  (if-let (template (yas--get-template-by-uuid major-mode template-uuid))
-      (let* ((template (yas--get-template-by-uuid major-mode template-uuid))
-             (template-path (yas--template-load-file template)))
+  (if-let* ((template (+snippet--get-template-by-uuid template-uuid major-mode))
+            (template-path (yas--template-load-file template)))
+      (progn
         (unless (file-readable-p template-path)
           (user-error "Cannot read %S" template-path))
         (find-file template-path)
@@ -182,25 +204,30 @@ buggy behavior when <delete> is pressed in an empty field."
     (user-error "Cannot find template with UUID %S" template-uuid)))
 
 ;;;###autoload
-(defun +snippets/new ()
-  "Create a new snippet in `+snippets-dir'."
-  (interactive)
-  (let ((default-directory
-          (expand-file-name (symbol-name major-mode)
-                            +snippets-dir)))
-    (+snippet--ensure-dir default-directory)
-    (with-current-buffer (switch-to-buffer "untitled-snippet")
-      (snippet-mode)
-      (erase-buffer)
-      (yas-expand-snippet (concat "# -*- mode: snippet -*-\n"
-                                  "# name: $1\n"
-                                  "# uuid: $2\n"
-                                  "# key: ${3:trigger-key}${4:\n"
-                                  "# condition: t}\n"
-                                  "# --\n"
-                                  "$0"))
-      (when (bound-and-true-p evil-local-mode)
-        (evil-insert-state)))))
+(defun +snippets/new (&optional all-modes)
+  "Create a new snippet in `+snippets-dir'.
+
+If there are extra yasnippet modes active, or if ALL-MODES is non-nil, you will
+be prompted for the mode for which to create the snippet."
+  (interactive "P")
+  (let* ((mode (+snippets--snippet-mode-name-completing-read all-modes))
+         (default-directory (+snippet--ensure-dir (expand-file-name mode +snippets-dir)))
+         (snippet-key (read-string "Enter a key for the snippet: "))
+         (snippet-file-name (expand-file-name snippet-key)))
+    (when (+snippets--use-snippet-file-name-p snippet-file-name)
+      (with-current-buffer (switch-to-buffer snippet-key)
+        (snippet-mode)
+        (erase-buffer)
+        (set-visited-file-name snippet-file-name)
+        (yas-expand-snippet (concat "# -*- mode: snippet -*-\n"
+                                    "# name: $1\n"
+                                    "# uuid: $2\n"
+                                    "# key: ${3:" snippet-key "}${4:\n"
+                                    "# condition: t}\n"
+                                    "# --\n"
+                                    "$0"))
+        (when (bound-and-true-p evil-local-mode)
+          (evil-insert-state))))))
 
 ;;;###autoload
 (defun +snippets/new-alias (template-uuid)
@@ -213,21 +240,26 @@ You will be prompted for a snippet to alias."
                                     current-prefix-arg)))
   (unless (require 'doom-snippets nil t)
     (user-error "This command requires the `doom-snippets' library bundled with Doom Emacs"))
-  (let ((default-directory (expand-file-name (symbol-name major-mode) +snippets-dir)))
-    (+snippet--ensure-dir default-directory)
-    (with-current-buffer (switch-to-buffer "untitled-snippet")
-      (snippet-mode)
-      (erase-buffer)
-      (yas-expand-snippet
-       (concat "# -*- mode: snippet -*-\n"
-               "# name: $1\n"
-               "# key: ${2:trigger-key}${3:\n"
-               "# condition: t}\n"
-               "# type: command\n"
-               "# --\n"
-               "(%alias \"${4:" (or template-uuid "uuid") "}\")"))
-      (when (bound-and-true-p evil-local-mode)
-        (evil-insert-state)))))
+  (let* ((default-directory (+snippet--ensure-dir (expand-file-name
+                                                   (symbol-name major-mode)
+                                                   +snippets-dir)))
+         (alias-key (read-string "Enter a key for the alias: "))
+         (alias-file-name (expand-file-name alias-key)))
+    (when (+snippets--use-snippet-file-name-p alias-file-name)
+      (with-current-buffer (switch-to-buffer alias-key)
+        (snippet-mode)
+        (erase-buffer)
+        (set-visited-file-name alias-file-name)
+        (yas-expand-snippet
+         (concat "# -*- mode: snippet -*-\n"
+                 "# name: $1\n"
+                 "# key: ${2:" alias-key "}${3:\n"
+                 "# condition: t}\n"
+                 "# type: command\n"
+                 "# --\n"
+                 "(doom-snippets-expand :uuid \"${4:" (or template-uuid "uuid") "}\")"))
+        (when (bound-and-true-p evil-local-mode)
+          (evil-insert-state))))))
 
 ;;;###autoload
 (defun +snippets/edit (template-uuid)
@@ -237,23 +269,24 @@ If the snippet isn't in `+snippets-dir', it will be copied there (where it will
 shadow the default snippet)."
   (interactive
    (list
-    (+snippet--completing-read-uuid "Select snippet to alias: "
+    (+snippet--completing-read-uuid "Select snippet to edit: "
                                     current-prefix-arg)))
-  (let* ((major-mode (if (eq major-mode 'snippet-mode)
-                         (intern (file-name-base (directory-file-name default-directory)))
-                       major-mode))
-         (template (yas--get-template-by-uuid major-mode template-uuid))
-         (template-path (yas--template-load-file template)))
-    (if (file-in-directory-p template-path +snippets-dir)
-        (find-file template-path)
-      (let ((buf (get-buffer-create (format "*%s*" (file-name-nondirectory template-path)))))
-        (with-current-buffer (switch-to-buffer buf)
-          (insert-file-contents template-path)
-          (snippet-mode)
-          (setq default-directory
-                (expand-file-name (file-name-nondirectory template-path)
-                                  (expand-file-name (symbol-name major-mode)
-                                                    +snippets-dir))))))))
+  (if-let* ((major-mode (if (eq major-mode 'snippet-mode)
+                            (intern (file-name-base (directory-file-name default-directory)))
+                          major-mode))
+            (template (+snippet--get-template-by-uuid template-uuid major-mode))
+            (template-path (yas--template-load-file template)))
+      (if (file-in-directory-p template-path +snippets-dir)
+          (find-file template-path)
+        (let ((buf (get-buffer-create (format "*%s*" (file-name-nondirectory template-path)))))
+          (with-current-buffer (switch-to-buffer buf)
+            (insert-file-contents template-path)
+            (snippet-mode)
+            (setq default-directory
+                  (expand-file-name (file-name-nondirectory template-path)
+                                    (expand-file-name (symbol-name major-mode)
+                                                      +snippets-dir))))))
+    (user-error "Couldn't find a snippet with uuid %S" template-uuid)))
 
 ;;;###autoload
 (defun +snippets-show-hints-in-header-line-h ()
@@ -287,15 +320,14 @@ shadow the default snippet)."
 ;;; Advice
 
 ;;;###autoload
-(defun +snippets-expand-on-region-a (orig-fn &optional no-condition)
+(defun +snippets-expand-on-region-a (fn &optional no-condition)
   "Fix off-by-one when expanding snippets on an evil visual region.
 
 Also strips whitespace out of selection. Also switches to insert mode. If
-`evil-local-mode' isn't enabled, or we're not in visual mode, run ORIG-FN as
-is."
+`evil-local-mode' isn't enabled, or we're not in visual mode, run FN as is."
   (if (not (and (bound-and-true-p evil-local-mode)
                 (evil-visual-state-p)))
-      (funcall orig-fn no-condition)
+      (funcall fn no-condition)
     ;; Trim whitespace in selected region, so as not to introduce extra
     ;; whitespace into `yas-selected-text'.
     (evil-visual-select (save-excursion
@@ -309,7 +341,9 @@ is."
                         'inclusive)
     (letf! ((defun region-beginning () evil-visual-beginning)
             (defun region-end () evil-visual-end))
-      (funcall orig-fn no-condition)))
+      (funcall fn no-condition)))
   (when (and (bound-and-true-p evil-local-mode)
+             (not (or (evil-emacs-state-p)
+                      (evil-insert-state-p)))
              (yas-active-snippets))
     (evil-insert-state +1)))

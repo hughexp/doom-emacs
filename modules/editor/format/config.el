@@ -1,17 +1,14 @@
 ;;; editor/format/config.el -*- lexical-binding: t; -*-
 
-(defvar +format-on-save-enabled-modes
-  '(not emacs-lisp-mode  ; elisp's mechanisms are good enough
-        sql-mode         ; sqlformat is currently broken
-        tex-mode         ; latexindent is broken
-        latex-mode)
-  "A list of major modes in which to reformat the buffer upon saving.
-
-If this list begins with `not', then it negates the list.
-If it is `t', it is enabled in all modes.
-If nil, it is disabled in all modes, the same as if the +onsave flag wasn't
-  used at all.
-
+(defvar +format-on-save-disabled-modes
+  '(sql-mode           ; sqlformat is currently broken
+    tex-mode           ; latexindent is broken
+    latex-mode
+    org-msg-edit-mode) ; doesn't need a formatter
+  "A list of major modes in which to not reformat the buffer upon saving.
+If it is t, it is disabled in all modes, the same as if the +onsave flag
+  wasn't used at all.
+If nil, formatting is enabled in all modes.
 Irrelevant if you do not have the +onsave flag enabled for this module.")
 
 (defvar +format-preserve-indentation t
@@ -20,45 +17,71 @@ buffer. This is particularly useful for partials.
 
 Indentation is always preserved when formatting regions.")
 
-(defvar-local +format-with nil
-  "Set this to explicitly use a certain formatter for the current buffer.")
-
 (defvar +format-with-lsp t
   "If non-nil, format with LSP formatter if it's available.
 
 This can be set buffer-locally with `setq-hook!' to disable LSP formatting in
-select buffers.")
+select buffers.
+This has no effect on the +onsave flag, apheleia will always be used there.")
 
+(defvaralias '+format-with 'apheleia-formatter
+  "Set this to explicitly use a certain formatter for the current buffer.")
+
+(defvar +format-functions
+  '(+format-in-org-src-blocks-fn
+    +format-with-lsp-fn
+    +format-with-eglot-fn)
+  "A list of functions to run when formatting a buffer or region.
+
+Each function is given three arguments: the starting point, end point, and a
+symbol indicating the type of operation being requested (as a symbol: either
+`region' or `buffer').
+
+The first function to return non-nil will abort all functions after it,
+including Apheleia itself.")
 
 ;;
 ;;; Bootstrap
 
-(defun +format-enable-on-save-maybe-h ()
-  "Enable formatting on save in certain major modes.
+(when (modulep! +onsave)
+  (add-hook 'doom-first-file-hook #'apheleia-global-mode))
 
-This is controlled by `+format-on-save-enabled-modes'."
-  (unless (or (eq major-mode 'fundamental-mode)
-              (cond ((booleanp +format-on-save-enabled-modes)
-                     (null +format-on-save-enabled-modes))
-                    ((eq (car +format-on-save-enabled-modes) 'not)
-                     (memq major-mode (cdr +format-on-save-enabled-modes)))
-                    ((not (memq major-mode +format-on-save-enabled-modes))))
-              (not (require 'format-all nil t)))
-    (+format-enable-on-save-h)))
+(defun +format-maybe-inhibit-h ()
+  "Check if formatting should be disabled for current buffer.
+This is controlled by `+format-on-save-disabled-modes'."
+  (or (eq major-mode 'fundamental-mode)
+      (string-blank-p (buffer-name))
+      (eq +format-on-save-disabled-modes t)
+      (not (null (memq major-mode +format-on-save-disabled-modes)))))
 
-(when (featurep! +onsave)
-  (add-hook 'after-change-major-mode-hook #'+format-enable-on-save-maybe-h))
+
+(after! apheleia
+  (add-to-list 'doom-debug-variables '(apheleia-log-only-errors . nil))
+
+  (when (modulep! +onsave)
+    (add-to-list 'apheleia-inhibit-functions #'+format-maybe-inhibit-h)))
 
 
 ;;
 ;;; Hacks
 
-;; Allow a specific formatter to be used by setting `+format-with', either
-;; buffer-locally or let-bound.
-(advice-add #'format-all--probe :around #'+format-probe-a)
+(defadvice! +format--inhibit-reformat-on-prefix-arg-a (orig-fn &optional arg)
+  "Make it so \\[save-buffer] with prefix arg inhibits reformatting."
+  :around #'save-buffer
+  (let ((apheleia-mode (and apheleia-mode (memq arg '(nil 1)))))
+    (funcall orig-fn)))
 
-;; Doom uses a modded `format-all-buffer', which
-;;   1. Enables partial reformatting (while preserving leading indentation),
-;;   2. Applies changes via RCS patch, line by line, to protect buffer markers
-;;      and avoid any jarring cursor+window scrolling.
-(advice-add #'format-all-buffer--with :around #'+format-buffer-a)
+(add-hook!
+ 'apheleia-post-format-hook
+ ;; HACK `web-mode' doesn't update syntax highlighting after arbitrary buffer
+ ;;      modifications, so we must trigger refontification manually.
+ (defun +format--fix-web-mode-fontification-h ()
+   (when (eq major-mode 'web-mode)
+     (setq web-mode-fontification-off nil)
+     (when (and web-mode-scan-beg web-mode-scan-end global-font-lock-mode)
+       (save-excursion
+         (font-lock-fontify-region web-mode-scan-beg web-mode-scan-end)))))
+
+ (defun +format--refresh-git-gutter-h ()
+   (when (fboundp '+vc-gutter-update-h)
+     (+vc-gutter-update-h))))

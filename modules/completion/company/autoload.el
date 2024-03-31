@@ -2,7 +2,7 @@
 
 ;;;###autoload
 (defvar +company-backend-alist
-  '((text-mode company-dabbrev company-yasnippet company-ispell)
+  '((text-mode (:separate company-dabbrev company-yasnippet company-ispell))
     (prog-mode company-capf company-yasnippet)
     (conf-mode company-capf company-dabbrev-code company-yasnippet))
   "An alist matching modes to company backends. The backends for any mode is
@@ -30,7 +30,7 @@ Examples:
 
   (set-company-backend! 'sh-mode nil)  ; unsets backends for sh-mode"
   (declare (indent defun))
-  (dolist (mode (doom-enlist modes))
+  (dolist (mode (ensure-list modes))
     (if (null (car backends))
         (setq +company-backend-alist
               (delq (assq mode +company-backend-alist)
@@ -81,8 +81,10 @@ Examples:
 ;;;###autoload
 (defun +company-has-completion-p ()
   "Return non-nil if a completion candidate exists at point."
-  (and (company-manual-begin)
-       (= company-candidates-length 1)))
+  (when company-mode
+    (unless company-candidates-length
+      (company-manual-begin))
+    (= company-candidates-length 1)))
 
 ;;;###autoload
 (defun +company/toggle-auto-completion ()
@@ -153,3 +155,18 @@ C-x C-l."
   (let ((company-selection-wrap-around t))
     (call-interactively #'+company/dabbrev)
     (company-select-previous-or-abort)))
+
+;;;###autoload
+(defun +company/completing-read ()
+  "Complete current company candidates in minibuffer.
+
+Uses ivy, helm, vertico, or ido, if available."
+  (interactive)
+  (cond ((modulep! :completion ivy)
+         (call-interactively #'counsel-company))
+        ((modulep! :completion helm)
+         (call-interactively #'helm-company))
+        ((not company-candidates)
+         (user-error "No company candidates available"))
+        ((when-let (cand (completing-read "Candidate: " company-candidates))
+           (company-finish cand)))))

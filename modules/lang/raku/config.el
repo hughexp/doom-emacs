@@ -9,5 +9,6 @@
 
 
 (use-package! flycheck-raku
-  :when (featurep! :checkers syntax)
+  :when (and (modulep! :checkers syntax)
+             (not (modulep! :checkers syntax +flymake)))
   :after raku-mode)

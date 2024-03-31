@@ -1,14 +1,20 @@
 ;;; tools/dired/config.el -*- lexical-binding: t; -*-
 
+(defvar +dired-dirvish-icon-provider 'nerd-icons
+  "Icon provider to use for dirvish when the module is enabled.")
+
 (use-package! dired
   :commands dired-jump
   :init
-  (setq dired-auto-revert-buffer t  ; don't prompt to revert; just do it
-        dired-dwim-target t  ; suggest a target for moving/copying intelligently
+  (setq dired-dwim-target t  ; suggest a target for moving/copying intelligently
         dired-hide-details-hide-symlink-targets nil
+        ;; don't prompt to revert, just do it
+        dired-auto-revert-buffer #'dired-buffer-stale-p
         ;; Always copy/delete recursively
         dired-recursive-copies  'always
         dired-recursive-deletes 'top
+        ;; Ask whether destination dirs should get created when copying/removing files.
+        dired-create-destination-dirs 'ask
         ;; Where to store image caches
         image-dired-dir (concat doom-cache-dir "image-dired/")
         image-dired-db-file (concat image-dired-dir "db.el")
@@ -23,7 +29,7 @@
   (set-evil-initial-state! 'image-dired-display-image-mode 'emacs)
 
   (let ((args (list "-ahl" "-v" "--group-directories-first")))
-    (when IS-BSD
+    (when (featurep :system 'bsd)
       ;; Use GNU ls as `gls' from `coreutils' if available. Add `(setq
       ;; dired-use-ls-dired nil)' to your config to suppress the Dired warning
       ;; when not using GNU ls.
@@ -34,16 +40,24 @@
     (setq dired-listing-switches (string-join args " "))
 
     (add-hook! 'dired-mode-hook
-      (defun +dired-disable-gnu-ls-flags-in-tramp-buffers-h ()
-        "Fix #1703: dired over TRAMP displays a blank screen.
+      (defun +dired-disable-gnu-ls-flags-maybe-h ()
+        "Remove extraneous switches from `dired-actual-switches' when it's
+uncertain that they are supported (e.g. over TRAMP or on Windows).
 
-This is because there's no guarantee the remote system has GNU ls, which is the
-only variant that supports --group-directories-first."
-        (when (file-remote-p default-directory)
+Fixes #1703: dired over TRAMP displays a blank screen.
+Fixes #3939: unsortable dired entries on Windows."
+        (when (or (file-remote-p default-directory)
+                  (and (boundp 'ls-lisp-use-insert-directory-program)
+                       (not ls-lisp-use-insert-directory-program)))
           (setq-local dired-actual-switches (car args))))))
 
   ;; Don't complain about this command being disabled when we use it
   (put 'dired-find-alternate-file 'disabled nil)
+
+  (defadvice! +dired--no-revert-in-virtual-buffers-a (&rest args)
+    "Don't auto-revert in dired-virtual buffers (see `dired-virtual-revert')."
+    :before-while #'dired-buffer-stale-p
+    (not (eq revert-buffer-function #'dired-virtual-revert)))
 
   (map! :map dired-mode-map
         ;; Kill all dired buffers on q
@@ -60,16 +74,8 @@ only variant that supports --group-directories-first."
   :hook (dired-mode . diredfl-mode))
 
 
-(use-package! diff-hl
-  :hook (dired-mode . diff-hl-dired-mode-unless-remote)
-  :hook (magit-post-refresh . diff-hl-magit-post-refresh)
-  :config
-  ;; use margin instead of fringe
-  (diff-hl-margin-mode))
-
-
 (use-package! ranger
-  :when (featurep! +ranger)
+  :when (modulep! +ranger)
   :after dired
   :init (setq ranger-override-dired t)
   :config
@@ -97,6 +103,26 @@ we have to clean it up ourselves."
       (with-current-buffer (window-buffer ranger-preview-window)
         (local-unset-key [mouse-1]))))
 
+  (defadvice! +dired--ranger-travel-a ()
+    "Temporary fix for this function until ralesi/ranger.el#236 gets merged."
+    :override #'ranger-travel
+    (interactive)
+    (let ((prompt "Travel: "))
+      (cond
+       ((bound-and-true-p helm-mode)
+        (ranger-find-file (helm-read-file-name prompt)))
+       ((bound-and-true-p ivy-mode)
+        (ivy-read prompt 'read-file-name-internal
+                  :matcher #'counsel--find-file-matcher
+                  :action
+                  (lambda (x)
+                    (with-ivy-window
+                     (ranger-find-file (expand-file-name x default-directory))))))
+       ((bound-and-true-p ido-mode)
+        (ranger-find-file (ido-read-file-name prompt)))
+       (t
+        (ranger-find-file (read-file-name prompt))))))
+
   (setq ranger-cleanup-on-disable t
         ranger-excluded-extensions '("mkv" "iso" "mp4")
         ranger-deer-show-details t
@@ -105,47 +131,67 @@ we have to clean it up ourselves."
         ranger-hide-cursor nil))
 
 
-(use-package! all-the-icons-dired
-  :when (featurep! +icons)
-  :hook (dired-mode . all-the-icons-dired-mode)
+(use-package! dirvish
+  :when (modulep! +dirvish)
+  :defer t
+  :init (after! dired (dirvish-override-dired-mode))
+  :hook (dired-mode . dired-omit-mode)
   :config
-  ;; HACK Fixes #1929: icons break file renaming in Emacs 27+, because the icon
-  ;;      is considered part of the filename, so we disable icons while we're in
-  ;;      wdired-mode.
-  (when EMACS27+
-    (defvar +wdired-icons-enabled -1)
+  (require 'dired-x)
+  (setq dirvish-cache-dir (concat doom-cache-dir "dirvish/")
+        dirvish-hide-details nil
+        dirvish-attributes '(git-msg)
+        dired-omit-files (concat dired-omit-files "\\|^\\..*$"))
+  (when (modulep! +icons)
+    (push +dired-dirvish-icon-provider dirvish-attributes))
+  (map! :map dirvish-mode-map
+        :n "b" #'dirvish-goto-bookmark
+        :n "z" #'dirvish-show-history
+        :n "f" #'dirvish-file-info-menu
+        :n "F" #'dirvish-toggle-fullscreen
+        :n "l" #'dired-find-file
+        :n "h" #'dired-up-directory
+        :localleader
+        "h" #'dired-omit-mode))
 
-    (defadvice! +dired-disable-icons-in-wdired-mode-a (&rest _)
-      :before #'wdired-change-to-wdired-mode
-      (setq-local +wdired-icons-enabled (if all-the-icons-dired-mode 1 -1))
-      (when all-the-icons-dired-mode
-        (all-the-icons-dired-mode -1)))
 
-    (defadvice! +dired-restore-icons-after-wdired-mode-a (&rest _)
-      :after #'wdired-change-to-dired-mode
-      (all-the-icons-dired-mode +wdired-icons-enabled))))
+(use-package! nerd-icons-dired
+  :when (modulep! +icons)
+  :unless (modulep! +dirvish)
+  :hook (dired-mode . nerd-icons-dired-mode)
+  :config
+  (defadvice! +dired-disable-icons-in-wdired-mode-a (&rest _)
+    :before #'wdired-change-to-wdired-mode
+    (setq-local +wdired-icons-enabled (if nerd-icons-dired-mode 1 -1))
+    (when nerd-icons-dired-mode
+      (nerd-icons-dired-mode -1)))
+
+  (defadvice! +dired-restore-icons-after-wdired-mode-a (&rest _)
+    :after #'wdired-change-to-dired-mode
+    (nerd-icons-dired-mode +wdired-icons-enabled)))
 
 
 (use-package! dired-x
-  :unless (featurep! +ranger)
+  :unless (modulep! +ranger)
   :hook (dired-mode . dired-omit-mode)
   :config
   (setq dired-omit-verbose nil
         dired-omit-files
         (concat dired-omit-files
-                "\\|^.DS_Store\\'"
-                "\\|^.project\\(?:ile\\)?\\'"
-                "\\|^.\\(svn\\|git\\)\\'"
-                "\\|^.ccls-cache\\'"
+                "\\|^\\.DS_Store\\'"
+                "\\|^flycheck_.*"
+                "\\|^\\.project\\(?:ile\\)?\\'"
+                "\\|^\\.\\(?:svn\\|git\\)\\'"
+                "\\|^\\.ccls-cache\\'"
                 "\\|\\(?:\\.js\\)?\\.meta\\'"
                 "\\|\\.\\(?:elc\\|o\\|pyo\\|swp\\|class\\)\\'"))
   ;; Disable the prompt about whether I want to kill the Dired buffer for a
   ;; deleted directory. Of course I do!
   (setq dired-clean-confirm-killing-deleted-buffers nil)
   ;; Let OS decide how to open certain files
-  (when-let (cmd (cond (IS-MAC "open")
-                       (IS-LINUX "xdg-open")
-                       (IS-WINDOWS "start")))
+  (when-let (cmd (cond ((featurep :system 'macos) "open")
+                       ((featurep :system 'linux) "xdg-open")
+                       ((featurep :system 'windows) "start")))
     (setq dired-guess-shell-alist-user
           `(("\\.\\(?:docx\\|pdf\\|djvu\\|eps\\)\\'" ,cmd)
             ("\\.\\(?:jpe?g\\|png\\|gif\\|xpm\\)\\'" ,cmd)

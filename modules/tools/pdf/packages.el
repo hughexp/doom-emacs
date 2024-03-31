@@ -1,9 +1,5 @@
 ;; -*- no-byte-compile: t; -*-
 ;;; tools/pdf/packages.el
 
-(package! pdf-tools
-  ;; REVIEW waiting on politza/pdf-tools#588
-  :recipe (:host github
-           :repo "flatwhatson/pdf-tools"
-           :branch "fix-macros")
-  :pin "eb6d40663069f2b7e6b52e907eeaa4e37375feb6")
+(package! pdf-tools :pin "c69e7656a4678fe25afbd29f3503dd19ee7f9896")
+(package! saveplace-pdf-view :pin "abfb5e1f463cffc18218a0f7f2fa141a271b1813")

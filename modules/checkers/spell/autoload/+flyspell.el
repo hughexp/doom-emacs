@@ -1,5 +1,5 @@
 ;;; checkers/spell/autoload/+flyspell.el -*- lexical-binding: t; -*-
-;;;###if (featurep! +flyspell)
+;;;###if (modulep! +flyspell)
 
 ;;;###autodef
 (defalias 'flyspell-mode! #'flyspell-mode)
@@ -11,7 +11,7 @@
 (defun set-flyspell-predicate! (modes predicate)
   "TODO"
   (declare (indent defun))
-  (dolist (mode (doom-enlist modes) +spell--flyspell-predicate-alist)
+  (dolist (mode (ensure-list modes) +spell--flyspell-predicate-alist)
     (add-to-list '+spell--flyspell-predicate-alist (cons mode predicate))))
 
 ;;;###autoload
@@ -56,7 +56,7 @@ or session. Otherwise, the addition is permanent."
     (if (null ispell-pdict-modified-p)
         (setq ispell-pdict-modified-p
               (list ispell-pdict-modified-p)))
-    (if (eq replace 'buffer)
+    (if (eq scope 'buffer)
         (ispell-add-per-file-word-list word))))
   (ispell-pdict-save t))
 

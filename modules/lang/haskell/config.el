@@ -10,7 +10,7 @@
 (after! haskell-mode
   (setq haskell-process-suggest-remove-import-lines t  ; warnings for redundant imports etc
         haskell-process-auto-import-loaded-modules t
-        haskell-process-show-overlays (not (featurep! :checkers syntax))) ; redundant with flycheck
+        haskell-process-show-overlays (not (modulep! :checkers syntax))) ; redundant with flycheck
 
   (set-lookup-handlers! 'haskell-mode
     :definition #'haskell-mode-jump-to-def-or-tag)
@@ -27,12 +27,15 @@
              #'haskell-collapse-mode ; support folding haskell code blocks
              #'interactive-haskell-mode)
 
+  (when (modulep! +tree-sitter)
+    (add-hook 'haskell-mode-local-vars-hook #'tree-sitter! 'append))
+
   (add-to-list 'completion-ignored-extensions ".hi")
 
   (map! :map haskell-mode-map
         :n "o" #'+haskell/evil-open-below
         :n "O" #'+haskell/evil-open-above
-        (:when (featurep! :tools lookup)
+        (:when (modulep! :tools lookup)
          [remap haskell-mode-jump-to-def-or-tag] #'+lookup/definition))
 
   (map! :localleader
@@ -43,10 +46,13 @@
         "H" #'haskell-hide-toggle-all))
 
 
-;;
-;;; Backends
-
-(cond ((featurep! +dante)  (load! "+dante"))
-      ((or (featurep! +lsp)
-           (featurep! +ghcide))
-       (load! "+lsp")))
+(use-package! lsp-haskell
+  :when (modulep! +lsp)
+  :defer t
+  :init
+  (add-hook 'haskell-mode-local-vars-hook #'lsp! 'append)
+  (add-hook 'haskell-literate-mode-local-vars-hook #'lsp! 'append)
+  (after! lsp-mode (require 'lsp-haskell))
+  :config
+  ;; Does some strange indentation if it pastes in the snippet
+  (setq-hook! 'haskell-mode-hook yas-indent-line 'fixed))

@@ -27,14 +27,14 @@
        (save-excursion
          (skip-chars-forward "^ ")
          (point))))))
-  (cond ((featurep! :completion helm)
+  (cond ((modulep! :completion helm)
          (require 'helm-nixos-options)
          ;; REVIEW We reimplment `helm-nixos-options' so we can supply
          ;; `initial-input'. Maybe use `helm-attrset' instead?
          (helm :sources `(,(helm-source-nixos-options-search))
                :buffer "*helm-nixos-options*"
                :input initial-input))
-        ((featurep! :completion ivy)
+        ((modulep! :completion ivy)
          (require 'nixos-options)
          (ivy-read "NixOS options: "
                    nixos-options
@@ -42,8 +42,13 @@
                    :initial-input initial-input
                    :action #'+nix--options-action
                    :caller '+nix/options))
-        ;; TODO Add general `completing-read' support
-        ((user-error "No search engine is enabled. Enable helm or ivy!")))
+        ((+nix--options-action (cdr
+                                (assoc
+                                 (completing-read "NixOs options: "
+                                                  nixos-options
+                                                  nil
+                                                  t
+                                                  initial-input) nixos-options)))))
   ;; Tell lookup module to let us handle things from here
   'deferred)
 
@@ -53,7 +58,8 @@
   (save-excursion
     (goto-char (point-min))
     (save-match-data
-      (if (not (re-search-forward "#! *\\(?:cached-\\)?nix-shell +-i +\\([^ \n]+\\)" 256 t))
+      (if (not (and (re-search-forward "\\_<nix-shell " (line-end-position 2) t)
+                    (re-search-forward "-i +\"?\\([^ \"\n]+\\)" (line-end-position) t)))
           (message "Couldn't determine mode for this script")
         (let* ((interp (match-string 1))
                (mode
@@ -67,4 +73,8 @@
           (when mode
             (prog1 (set-auto-mode-0 mode)
               (when (eq major-mode 'sh-mode)
-                (sh-set-shell interp)))))))))
+                (sh-set-shell interp))
+              ;; HACK Without this, quickrun tries to evaluate code directly
+              ;;      with (cached)?nix-shell.
+              ;; TODO Use the nix-shell/cached-nix-shell-given interpreter
+              (setq-local quickrun-option-shebang nil))))))))

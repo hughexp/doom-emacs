@@ -1,4 +1,9 @@
 ;;; lang/json/doctor.el -*- lexical-binding: t; -*-
 
-(unless (executable-find "jq")
-  (warn! "Couldn't find jq. counsel-jq won't work."))
+(when (and (modulep! :completion ivy)
+           (not (executable-find "jq")))
+  (warn! "Couldn't find jq. counsel-jq won't work." ))
+
+(assert! (or (not (modulep! +tree-sitter))
+             (modulep! :tools tree-sitter))
+         "This module requires (:tools tree-sitter)")

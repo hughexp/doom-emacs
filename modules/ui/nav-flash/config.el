@@ -5,10 +5,15 @@
     org-find-file org-find-file-at-mouse)
   "A list of commands that should not trigger nav-flash.")
 
+(defvar +nav-flash-exclude-modes
+  '(so-long-mode special-mode comint-mode term-mode vterm-mode)
+  "List of major modes where nav-flash won't automatically trigger.")
+
 
 ;;
 ;;; Packages
 
+;; DEPRECATED To be replaced with pulsar.el when Emacs 28 support is dropped
 (use-package! nav-flash
   :defer t
   :init
@@ -17,6 +22,7 @@
   (add-hook! '(imenu-after-jump-hook
                better-jumper-post-jump-hook
                counsel-grep-post-action-hook
+               consult-after-jump-hook
                dumb-jump-after-jump-hook)
              #'+nav-flash-blink-cursor-maybe-h)
 
@@ -34,8 +40,4 @@
   (advice-add #'evil-window-bottom :after #'+nav-flash-blink-cursor-a)
 
   ;; Bound to `ga' for evil users
-  (advice-add #'what-cursor-position :after #'+nav-flash-blink-cursor-a)
-
-  :config
-  (when (fboundp 'set-face-extend)
-    (set-face-extend 'nav-flash-face t)))
+  (advice-add #'what-cursor-position :after #'+nav-flash-blink-cursor-a))

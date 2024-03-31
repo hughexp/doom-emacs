@@ -8,7 +8,7 @@
         migemo-user-dictionary nil
         migemo-regex-dictionary nil
         migemo-coding-system 'utf-8-unix
-        migemo-directory (concat doom-etc-dir "migemo/")
+        migemo-directory (concat doom-data-dir "migemo/")
         migemo-dictionary "/usr/local/share/migemo/utf-8/migemo-dict")
   :config
   (when (executable-find migemo-command)
@@ -18,7 +18,7 @@
       :after avy
       :config (avy-migemo-mode 1))
 
-    (when (featurep! :completion helm)
+    (when (modulep! :completion helm)
       (after! helm (helm-migemo-mode +1)))))
 
 
@@ -34,8 +34,10 @@
         pangu-spacing-real-insert-separtor t))
 
 
-(use-package! ddskk
-  :general ("C-x j" #'skk-mode))
+(use-package! skk
+  :general ("C-x j" #'skk-mode)
+  :config
+  (add-hook 'doom-escape-hook #'skk-mode-exit))
 
 
 ;;

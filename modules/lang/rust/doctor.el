@@ -1,9 +1,13 @@
 ;; -*- lexical-binding: t; no-byte-compile: t; -*-
 ;;; lang/rust/doctor.el
 
-(assert! (or (not (featurep! +lsp))
-             (featurep! :tools lsp))
+(assert! (or (not (modulep! +lsp))
+             (modulep! :tools lsp))
          "This module requires (:tools lsp)")
+
+(assert! (or (not (modulep! +tree-sitter))
+             (modulep! :tools tree-sitter))
+         "This module requires (:tools tree-sitter)")
 
 (unless (executable-find "rustc")
   (warn! "Couldn't find rustc binary"))
@@ -11,7 +15,7 @@
 (unless (executable-find "cargo")
   (warn! "Couldn't find cargo binary"))
 
-(if (featurep! +lsp)
+(if (modulep! +lsp)
     (when (require 'rustic nil t)
       (pcase rustic-lsp-server
         (`rust-analyzer

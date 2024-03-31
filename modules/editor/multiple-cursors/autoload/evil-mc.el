@@ -1,5 +1,5 @@
 ;;; editor/multiple-cursors/autoload/evil-mc.el -*- lexical-binding: t; -*-
-;;;###if (featurep! :editor evil)
+;;;###if (modulep! :editor evil)
 
 ;;;###autoload
 (defun +multiple-cursors/evil-mc-toggle-cursors ()
@@ -68,7 +68,7 @@ FLAGS can be g and/or i; which mean the same thing they do in
 `evil-ex-substitute'."
   :evil-mc t
   :keep-visual t
-  (interactive "<R><//!><!>")
+  (interactive "<R><g/><!>")
   (unless (and (stringp pattern)
                (not (string-empty-p pattern)))
     (user-error "A regexp pattern is required"))

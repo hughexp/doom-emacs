@@ -4,6 +4,7 @@
   :mode "\\.s\\(?:ml\\|ig\\)\\'"
   :config
   (set-repl-handler! 'sml-mode #'run-sml)
+  (set-formatter! 'smlformat '("smlformat") :modes '(sml-mode))
 
   ;; don't auto-close apostrophes (type 'a = foo) and backticks (`Foo)
   (sp-with-modes 'sml-mode
@@ -23,7 +24,7 @@
 
 
 (use-package! company-mlton
-  :when (featurep! :completion company)
+  :when (modulep! :completion company)
   :hook (sml-mode . company-mlton-init)
   :config
   (set-company-backend! 'sml-mode company-mlton-grouped-backend))

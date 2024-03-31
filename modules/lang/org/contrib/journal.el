@@ -1,5 +1,5 @@
 ;;; lang/org/contrib/journal.el -*- lexical-binding: t; -*-
-;;;###if (featurep! +journal)
+;;;###if (modulep! +journal)
 
 (use-package! org-journal
   :defer t
@@ -43,7 +43,7 @@
   ;; interpret it as anything other than a date.
   (setq org-journal-carryover-items  "TODO=\"TODO\"|TODO=\"PROJ\"|TODO=\"STRT\"|TODO=\"WAIT\"|TODO=\"HOLD\"")
 
-  (set-popup-rule! "^\\*Org-journal search" :select t :quit t)
+  (set-company-backend! 'org-journal-mode 'company-capf 'company-dabbrev)
 
   (map! (:map org-journal-mode-map
          :n "]f"  #'org-journal-next-entry
@@ -55,10 +55,11 @@
          "C-p" #'org-journal-search-previous)
         :localleader
         (:map org-journal-mode-map
-         "c" #'org-journal-new-entry
-         "d" #'org-journal-new-date-entry
-         "n" #'org-journal-next-entry
-         "p" #'org-journal-previous-entry
+         (:prefix "j"
+          "c" #'org-journal-new-entry
+          "d" #'org-journal-new-date-entry
+          "n" #'org-journal-next-entry
+          "p" #'org-journal-previous-entry)
          (:prefix "s"
           "s" #'org-journal-search
           "f" #'org-journal-search-forever

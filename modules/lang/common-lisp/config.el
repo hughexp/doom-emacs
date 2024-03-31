@@ -16,18 +16,28 @@
 (use-package! sly
   :hook (lisp-mode-local-vars . sly-editing-mode)
   :init
+  ;; I moved this hook to `lisp-mode-local-vars', so it only affects
+  ;; `lisp-mode', and not every other derived lisp mode (like `fennel-mode').
+  ;; We run it twice because the hook is both autoloaded and evaluated at
+  ;; load-time, so it must be removed twice.
+  (after! (:or emacs sly)
+    (remove-hook 'lisp-mode-hook #'sly-editing-mode))
+
   (after! lisp-mode
-    (set-repl-handler! 'lisp-mode #'sly-mrepl)
+    (set-repl-handler! 'lisp-mode #'+lisp/open-repl)
     (set-eval-handler! 'lisp-mode #'sly-eval-region)
+    (set-formatter! 'lisp-indent #'apheleia-indent-lisp-buffer :modes '(lisp-mode))
     (set-lookup-handlers! 'lisp-mode
       :definition #'sly-edit-definition
       :documentation #'sly-describe-symbol))
 
+  ;; This needs to be appended so it fires later than `sly-editing-mode'
+  (add-hook 'lisp-mode-local-vars-hook #'sly-lisp-indent-compatibility-mode 'append)
+
   ;; HACK Ensures that sly's contrib modules are loaded as soon as possible, but
   ;;      also as late as possible, so users have an opportunity to override
   ;;      `sly-contrib' in an `after!' block.
-  (add-hook! 'doom-after-init-modules-hook
-    (after! sly (sly-setup)))
+  (add-hook! 'after-init-hook (after! sly (sly-setup)))
 
   :config
   (setq sly-mrepl-history-file-name (concat doom-cache-dir "sly-mrepl-history")
@@ -66,7 +76,7 @@
       "Attempt to auto-start sly when opening a lisp buffer."
       (cond ((or (doom-temp-buffer-p (current-buffer))
                  (sly-connected-p)))
-            ((executable-find inferior-lisp-program)
+            ((executable-find (car (split-string inferior-lisp-program)))
              (let ((sly-auto-start 'always))
                (sly-auto-start)
                (add-hook 'kill-buffer-hook #'+common-lisp--cleanup-sly-maybe-h nil t)))
@@ -88,9 +98,10 @@
 
         (:localleader
          :map lisp-mode-map
-         :desc "Sly"          "'" #'sly
-         :desc "Sly (ask)"    ";" (cmd!! #'sly '-)
-         :desc "Expand macro" "m" #'macrostep-expand
+         :desc "Sly"                       "'" #'sly
+         :desc "Sly (ask)"                 ";" (cmd!! #'sly '-)
+         :desc "Expand macro"              "m" #'macrostep-expand
+         :desc "Find local Quicklisp file" "f" #'+lisp/find-file-in-quicklisp
          (:prefix ("c" . "compile")
           :desc "Compile file"          "c" #'sly-compile-file
           :desc "Compile/load file"     "C" #'sly-compile-and-load-file
@@ -99,12 +110,13 @@
           :desc "Remove notes"          "n" #'sly-remove-notes
           :desc "Compile region"        "r" #'sly-compile-region)
          (:prefix ("e" . "evaluate")
-          :desc "Evaluate buffer"     "b" #'sly-eval-buffer
-          :desc "Evaluate last"       "e" #'sly-eval-last-expression
-          :desc "Evaluate/print last" "E" #'sly-eval-print-last-expression
-          :desc "Evaluate defun"      "f" #'sly-eval-defun
-          :desc "Undefine function"   "F" #'sly-undefine-function
-          :desc "Evaluate region"     "r" #'sly-eval-region)
+          :desc "Evaluate buffer"        "b" #'sly-eval-buffer
+          :desc "Evaluate defun"         "d" #'sly-overlay-eval-defun
+          :desc "Evaluate last"          "e" #'sly-eval-last-expression
+          :desc "Evaluate/print last"    "E" #'sly-eval-print-last-expression
+          :desc "Evaluate defun (async)" "f" #'sly-eval-defun
+          :desc "Undefine function"      "F" #'sly-undefine-function
+          :desc "Evaluate region"        "r" #'sly-eval-region)
          (:prefix ("g" . "goto")
           :desc "Go back"              "b" #'sly-pop-find-definition-stack
           :desc "Go to"                "d" #'sly-edit-definition
@@ -130,8 +142,10 @@
           :desc "Who sets"                "S" #'sly-who-sets)
          (:prefix ("r" . "repl")
           :desc "Clear REPL"         "c" #'sly-mrepl-clear-repl
+          :desc "Load System"        "l" #'sly-asdf-load-system
           :desc "Quit connection"    "q" #'sly-quit-lisp
           :desc "Restart connection" "r" #'sly-restart-inferior-lisp
+          :desc "Reload Project"     "R" #'+lisp/reload-project
           :desc "Sync REPL"          "s" #'sly-mrepl-sync)
          (:prefix ("s" . "stickers")
           :desc "Toggle breaking stickers" "b" #'sly-stickers-toggle-break-on-stickers
@@ -140,12 +154,14 @@
           :desc "Fetch stickers"           "f" #'sly-stickers-fetch
           :desc "Replay stickers"          "r" #'sly-stickers-replay
           :desc "Add/remove sticker"       "s" #'sly-stickers-dwim)
-         (:prefix ("t" . "trace")
+         (:prefix ("t" . "test")
+          :desc "Test System" "s" #'sly-asdf-test-system)
+         (:prefix ("T" . "trace")
           :desc "Toggle"         "t" #'sly-toggle-trace-fdefinition
           :desc "Toggle (fancy)" "T" #'sly-toggle-fancy-trace
           :desc "Untrace all"    "u" #'sly-untrace-all)))
 
-  (when (featurep! :editor evil +everywhere)
+  (when (modulep! :editor evil +everywhere)
     (add-hook 'sly-mode-hook #'evil-normalize-keymaps)))
 
 
@@ -153,3 +169,8 @@
   :defer t
   :init
   (add-to-list 'sly-contribs 'sly-repl-ansi-color))
+
+(use-package! sly-asdf
+  :defer t
+  :init
+  (add-to-list 'sly-contribs 'sly-asdf 'append))

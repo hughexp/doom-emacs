@@ -15,9 +15,9 @@ PRED can either be a regexp string or a major mode symbol. PLIST may contain
 these properties:
 
   :when FUNCTION
-    Provides a secondary predicate. This function takes no arguments and is
-    executed from within the target buffer. If it returns nil, this rule will be
-    skipped over.
+    Provides a secondary predicate. This function takes the filename as an
+    argument and is executed from within the target buffer. If it returns nil,
+    this rule will be skipped over.
   :trigger STRING|FUNCTION
     If a string, this is the yasnippet trigger keyword used to trigger the
       target snippet.
@@ -59,7 +59,10 @@ evil is loaded and enabled)."
   (when (and pred (not ignore))
     (when (if project (doom-project-p) t)
       (unless mode
-        (setq mode (if (symbolp pred) pred major-mode)))
+        (setq mode
+              (if (and (symbolp pred) (not (booleanp pred)))
+                  pred
+                major-mode)))
       (unless mode
         (user-error "Couldn't determine mode for %s file template" pred))
       (unless trigger
@@ -78,7 +81,7 @@ evil is loaded and enabled)."
                    (and yas--active-field-overlay
                         (overlay-buffer yas--active-field-overlay)
                         (overlay-get yas--active-field-overlay 'yas--field)))
-          (evil-initialize-state 'insert))))))
+          (evil-change-state 'insert))))))
 
 ;;;###autoload
 (defun +file-templates-get-short-path ()
@@ -89,9 +92,17 @@ evil is loaded and enabled)."
              (match-string 1 path))
             ((file-in-directory-p path doom-emacs-dir)
              (file-relative-name path doom-emacs-dir))
-            ((file-in-directory-p path doom-private-dir)
-             (file-relative-name path doom-private-dir))
+            ((file-in-directory-p path doom-user-dir)
+             (file-relative-name path doom-user-dir))
             ((abbreviate-file-name path))))))
+
+;;;###autoload
+(defun +file-templates-module-for-path (&optional path)
+  "Generate a title for a doom module's readme at PATH."
+  (let ((m (doom-module-from-path (or path (buffer-file-name)))))
+    (if (eq (cdr m) 'README.org)
+        (symbol-name (car m))
+      (format "%s %s" (car m) (cdr m)))))
 
 
 ;;
@@ -119,4 +130,31 @@ evil is loaded and enabled)."
   "Tests the current buffer and outputs the file template rule most appropriate
 for it. This is used for testing."
   (interactive)
-  (message "Found %s" (cl-find-if #'+file-template-p +file-templates-alist)))
+  (cl-destructuring-bind (pred &rest plist &key trigger mode &allow-other-keys)
+      (or (cl-find-if #'+file-template-p +file-templates-alist)
+          (user-error "Found no file template for this file"))
+    (if (or (functionp trigger)
+            (cl-find trigger
+                     (yas--all-templates
+                      (yas--get-snippet-tables
+                       mode))
+                     :key #'yas--template-key :test #'equal))
+        (message "Found %s" (cons pred plist))
+      (message "Found rule, but can't find associated snippet: %s" (cons pred plist)))))
+
+
+;;
+;;; Trigger functions
+
+(defun +file-templates-insert-doom-docs-fn ()
+  "Expand one of Doom's README templates depending."
+  (+file-templates--expand
+   t :trigger
+   (let ((path (file-truename (buffer-file-name))))
+     (cond ((string-match-p "/modules/[^/]+/README\\.org$" path)
+            "__doom-category-readme")
+           ((string-match-p "/modules/[^/]+/[^/]+/README\\.org$" path)
+            "__doom-readme")
+           ((file-in-directory-p path doom-docs-dir)
+            "__doom-docs")
+           ("__")))))

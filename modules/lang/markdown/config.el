@@ -18,13 +18,11 @@ capture, the end position, and the output buffer.")
 (use-package! markdown-mode
   :mode ("/README\\(?:\\.md\\)?\\'" . gfm-mode)
   :init
-  (setq markdown-enable-math t ; syntax highlighting for latex fragments
-        markdown-enable-wiki-links t
-        markdown-italic-underscore t
+  (setq markdown-italic-underscore t
         markdown-asymmetric-header t
-        markdown-fontify-code-blocks-natively t
         markdown-gfm-additional-languages '("sh")
         markdown-make-gfm-checkboxes-buttons t
+        markdown-fontify-whole-heading-line t
 
         ;; `+markdown-compile' offers support for many transpilers (see
         ;; `+markdown-compile-functions'), which it tries until one succeeds.
@@ -32,8 +30,8 @@ capture, the end position, and the output buffer.")
         ;; This is set to `nil' by default, which causes a wrong-type-arg error
         ;; when you use `markdown-open'. These are more sensible defaults.
         markdown-open-command
-        (cond (IS-MAC "open")
-              (IS-LINUX "xdg-open"))
+        (cond ((featurep :system 'macos) "open")
+              ((featurep :system 'linux) "xdg-open"))
 
         ;; A sensible and simple default preamble for markdown exports that
         ;; takes after the github asthetic (plus highlightjs syntax coloring).
@@ -44,6 +42,7 @@ capture, the end position, and the output buffer.")
         markdown-xhtml-header-content
         (concat "<meta name='viewport' content='width=device-width, initial-scale=1, shrink-to-fit=no'>"
                 "<style> body { box-sizing: border-box; max-width: 740px; width: 100%; margin: 40px auto; padding: 0 10px; } </style>"
+                "<script id='MathJax-script' async src='https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js'></script>"
                 "<script src='https://cdn.jsdelivr.net/gh/highlightjs/cdn-release/build/highlight.min.js'></script>"
                 "<script>document.addEventListener('DOMContentLoaded', () => { document.body.classList.add('markdown-body'); document.querySelectorAll('pre[lang] > code').forEach((code) => { code.classList.add(code.parentElement.lang); }); document.querySelectorAll('pre > code').forEach((code) => { hljs.highlightBlock(code); }); });</script>"))
 
@@ -63,7 +62,7 @@ capture, the end position, and the output buffer.")
                  :unless '(:add sp-point-before-word-p sp-point-before-same-p))
 
   ;; Highly rust blocks correctly
-  (when (featurep! :lang rust)
+  (when (modulep! :lang rust)
     (add-to-list 'markdown-code-lang-modes '("rust" . rustic-mode)))
 
   ;; Don't trigger autofill in code blocks (see `auto-fill-mode')
@@ -73,7 +72,7 @@ capture, the end position, and the output buffer.")
 
   ;; HACK Prevent mis-fontification of YAML metadata blocks in `markdown-mode'
   ;;      which occurs when the first line contains a colon in it. See
-  ;;      https://github.com/jrblevin/markdown-mode/issues/328.
+  ;;      jrblevin/markdown-mode#328.
   (defadvice! +markdown-disable-front-matter-fontification-a (&rest _)
     :override #'markdown-match-generic-metadata
     (ignore (goto-char (point-max))))
@@ -84,16 +83,47 @@ capture, the end position, and the output buffer.")
         "o" #'markdown-open
         "p" #'markdown-preview
         "e" #'markdown-export
-        (:when (featurep! +grip)
-          "p" #'grip-mode)
+        (:when (modulep! +grip)
+         "p" #'grip-mode)
         (:prefix ("i" . "insert")
-          "t" #'markdown-toc-generate-toc
-          "i" #'markdown-insert-image
-          "l" #'markdown-insert-link)))
+         :desc "Table Of Content"  "T" #'markdown-toc-generate-toc
+         :desc "Image"             "i" #'markdown-insert-image
+         :desc "Link"              "l" #'markdown-insert-link
+         :desc "<hr>"              "-" #'markdown-insert-hr
+         :desc "Heading 1"         "1" #'markdown-insert-header-atx-1
+         :desc "Heading 2"         "2" #'markdown-insert-header-atx-2
+         :desc "Heading 3"         "3" #'markdown-insert-header-atx-3
+         :desc "Heading 4"         "4" #'markdown-insert-header-atx-4
+         :desc "Heading 5"         "5" #'markdown-insert-header-atx-5
+         :desc "Heading 6"         "6" #'markdown-insert-header-atx-6
+         :desc "Code block"        "C" #'markdown-insert-gfm-code-block
+         :desc "Pre region"        "P" #'markdown-pre-region
+         :desc "Blockquote region" "Q" #'markdown-blockquote-region
+         :desc "Checkbox"          "[" #'markdown-insert-gfm-checkbox
+         :desc "Bold"              "b" #'markdown-insert-bold
+         :desc "Inline code"       "c" #'markdown-insert-code
+         :desc "Italic"            "e" #'markdown-insert-italic
+         :desc "Footnote"          "f" #'markdown-insert-footnote
+         :desc "Header dwim"       "h" #'markdown-insert-header-dwim
+         :desc "Italic"            "i" #'markdown-insert-italic
+         :desc "Kbd"               "k" #'markdown-insert-kbd
+         :desc "Pre"               "p" #'markdown-insert-pre
+         :desc "New blockquote"    "q" #'markdown-insert-blockquote
+         :desc "Strike through"    "s" #'markdown-insert-strike-through
+         :desc "Table"             "t" #'markdown-insert-table
+         :desc "Wiki link"         "w" #'markdown-insert-wiki-link)
+        (:prefix ("t" . "toggle")
+         :desc "Inline LaTeX"      "e" #'markdown-toggle-math
+         :desc "Code highlights"   "f" #'markdown-toggle-fontify-code-blocks-natively
+         :desc "Inline images"     "i" #'markdown-toggle-inline-images
+         :desc "URL hiding"        "l" #'markdown-toggle-url-hiding
+         :desc "Markup hiding"     "m" #'markdown-toggle-markup-hiding
+         :desc "Wiki links"        "w" #'markdown-toggle-wiki-links
+         :desc "GFM checkbox"      "x" #'markdown-toggle-gfm-checkbox)))
 
 
 (use-package! evil-markdown
-  :when (featurep! :editor evil +everywhere)
+  :when (modulep! :editor evil +everywhere)
   :hook (markdown-mode . evil-markdown-mode)
   :config
   (add-hook 'evil-markdown-mode-hook #'evil-normalize-keymaps)

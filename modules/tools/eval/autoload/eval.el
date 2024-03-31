@@ -24,12 +24,33 @@
 (defun +eval-display-results-in-overlay (output &optional source-buffer)
   "Display OUTPUT in a floating overlay next to the cursor."
   (require 'eros)
-  (let ((this-command #'+eval/buffer-or-region)
-        eros-overlays-use-font-lock)
-    (with-current-buffer (or source-buffer (current-buffer))
-      (eros--make-result-overlay output
-        :where (line-end-position)
-        :duration eros-eval-result-duration))))
+  (with-current-buffer (or source-buffer (current-buffer))
+    (let* ((this-command #'+eval/buffer-or-region)
+           (prefix eros-eval-result-prefix)
+           (lines (split-string output "\n"))
+           (prefixlen (length prefix))
+           (len (+ (apply #'max (mapcar #'length lines))
+                   prefixlen))
+           (col (- (current-column) (window-hscroll)))
+           (next-line? (or (cdr lines)
+                           (< (- (window-width)
+                                 (save-excursion (goto-char (line-end-position))
+                                                 (- (current-column)
+                                                    (window-hscroll))))
+                              len)))
+           (pad (if next-line?
+                    (+ (window-hscroll) prefixlen)
+                  0))
+           eros-overlays-use-font-lock)
+      (eros--make-result-overlay
+          (concat (make-string (max 0 (- pad prefixlen)) ?\s)
+                  prefix
+                  (string-join lines (concat hard-newline (make-string pad ?\s))))
+        :where (if next-line?
+                   (line-beginning-position 2)
+                 (line-end-position))
+        :duration eros-eval-result-duration
+        :format "%s"))))
 
 ;;;###autoload
 (defun +eval-display-results (output &optional source-buffer)
@@ -55,31 +76,58 @@
 ;;
 ;;; Commands
 
+(defvar quickrun-option-cmdkey)
 ;;;###autoload
 (defun +eval/buffer ()
   "Evaluate the whole buffer."
   (interactive)
-  (if (or (assq major-mode +eval-runners)
-          (and (fboundp '+eval--ensure-in-repl-buffer)
-               (ignore-errors
-                 (get-buffer-window (or (+eval--ensure-in-repl-buffer)
-                                        t)))))
-      (+eval/region (point-min) (point-max))
-    (quickrun)))
+  (let ((quickrun-option-cmdkey (bound-and-true-p quickrun-option-cmdkey)))
+    (if (or (assq major-mode +eval-runners)
+            (and (fboundp '+eval--ensure-in-repl-buffer)
+                 (ignore-errors
+                   (get-buffer-window (or (+eval--ensure-in-repl-buffer)
+                                          t))))
+            (and (require 'quickrun nil t)
+                 (equal (setq
+                         quickrun-option-cmdkey
+                         (quickrun--command-key
+                          (buffer-file-name (buffer-base-buffer))))
+                        "emacs")
+                 (alist-get 'emacs-lisp-mode +eval-runners)))
+        (if-let ((buffer-handler (plist-get (cdr (alist-get major-mode +eval-repls)) :send-buffer)))
+            (funcall buffer-handler)
+          (+eval/region (point-min) (point-max)))
+      (quickrun))))
 
 ;;;###autoload
 (defun +eval/region (beg end)
   "Evaluate a region between BEG and END and display the output."
   (interactive "r")
-  (let ((load-file-name buffer-file-name))
-    (if (and (fboundp '+eval--ensure-in-repl-buffer)
-             (ignore-errors
-               (get-buffer-window (or (+eval--ensure-in-repl-buffer)
-                                      t))))
-        (+eval/send-region-to-repl beg end)
-      (if-let (runner (alist-get major-mode +eval-runners))
-          (funcall runner beg end)
-        (quickrun-region beg end)))))
+  (let ((load-file-name buffer-file-name)
+        (load-true-file-name
+         (or buffer-file-truename
+             (if buffer-file-name
+                 (file-truename buffer-file-name)))))
+    (cond ((and (fboundp '+eval--ensure-in-repl-buffer)
+                (ignore-errors
+                  (get-buffer-window (or (+eval--ensure-in-repl-buffer)
+                                         t))))
+           (funcall (or (plist-get (cdr (alist-get major-mode +eval-repls)) :send-region)
+                        #'+eval/send-region-to-repl)
+                    beg end))
+          ((let ((runner
+                  (or (alist-get major-mode +eval-runners)
+                      (and (require 'quickrun nil t)
+                           (equal (setq
+                                   lang (quickrun--command-key
+                                         (buffer-file-name (buffer-base-buffer))))
+                                  "emacs")
+                           (alist-get 'emacs-lisp-mode +eval-runners))))
+                 lang)
+             (if runner
+                 (funcall runner beg end)
+               (let ((quickrun-option-cmdkey lang))
+                 (quickrun-region beg end))))))))
 
 ;;;###autoload
 (defun +eval/line-or-region ()
@@ -91,7 +139,10 @@
 
 ;;;###autoload
 (defun +eval/buffer-or-region ()
-  "Evaluate the whole buffer."
+  "Evaluate the region if it's active, otherwise evaluate the whole buffer.
+
+If a REPL is open the code will be evaluated in it, otherwise a quickrun
+runner will be used."
   (interactive)
   (call-interactively
    (if (use-region-p)
@@ -102,11 +153,19 @@
 (defun +eval/region-and-replace (beg end)
   "Evaluation a region between BEG and END, and replace it with the result."
   (interactive "r")
-  (cond ((eq major-mode 'emacs-lisp-mode)
-         (kill-region beg end)
-         (condition-case nil
-             (prin1 (eval (read (current-kill 0)))
-                    (current-buffer))
-           (error (message "Invalid expression")
-                  (insert (current-kill 0)))))
-        ((quickrun-replace-region beg end))))
+  (let (lang)
+    (cond
+     ((or (eq major-mode 'emacs-lisp-mode)
+          (and (require 'quickrun nil t)
+               (equal (setq
+                       lang (quickrun--command-key
+                             (buffer-file-name (buffer-base-buffer))))
+                      "emacs")))
+      (kill-region beg end)
+      (condition-case nil
+          (prin1 (eval (read (current-kill 0)))
+                 (current-buffer))
+        (error (message "Invalid expression")
+               (insert (current-kill 0)))))
+     ((let ((quickrun-option-cmdkey lang))
+        (quickrun-replace-region beg end))))))

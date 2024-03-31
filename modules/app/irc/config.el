@@ -141,6 +141,10 @@ playback.")
   ;; Fail gracefully if not in a circe buffer
   (global-set-key [remap tracking-next-buffer] #'+irc/tracking-next-buffer)
 
+  (when (modulep! :completion vertico)
+    (after! consult
+      (add-to-list 'consult-buffer-sources '+irc--consult-circe-source 'append)))
+
   (map! :localleader
         (:map circe-mode-map
           "a" #'tracking-next-buffer
@@ -149,8 +153,7 @@ playback.")
           "p" #'circe-command-PART
           "Q" #'+irc/quit
           "R" #'circe-reconnect
-          (:when (featurep! :completion ivy)
-            "c" #'+irc/ivy-jump-to-channel))
+          "c" #'+irc/jump-to-channel)
         (:map circe-channel-mode-map
           "n" #'circe-command-NAMES)))
 
@@ -173,18 +176,19 @@ playback.")
 (use-package! circe-notifications
   :commands enable-circe-notifications
   :init
-  (if +irc-defer-notifications
-      (add-hook! 'circe-server-connected-hook
-        (setq +irc--defer-timer
-              (run-at-time +irc-defer-notifications nil
-                           #'enable-circe-notifications)))
-    (add-hook 'circe-server-connected-hook #'enable-circe-notifications))
+  (add-hook! 'circe-server-connected-hook
+    (defun +irc-init-circe-notifications-h ()
+      (if (numberp +irc-defer-notifications)
+          (setq +irc--defer-timer
+                (run-at-time +irc-defer-notifications nil
+                             #'enable-circe-notifications))
+        (enable-circe-notifications))))
   :config
   (setq circe-notifications-watch-strings +irc-notifications-watch-strings
         circe-notifications-emacs-focused nil
         circe-notifications-alert-style
-        (cond (IS-MAC 'osx-notifier)
-              (IS-LINUX 'libnotify)
+        (cond ((featurep :system 'macos) 'osx-notifier)
+              ((featurep :system 'linux) 'libnotify)
               (circe-notifications-alert-style))))
 
 
@@ -194,7 +198,7 @@ playback.")
   (define-key lui-mode-map "\C-u" #'lui-kill-to-beginning-of-line)
   (setq lui-fill-type nil)
 
-  (when (featurep! :checkers spell)
+  (when (modulep! :checkers spell)
     (setq lui-flyspell-p t))
 
   (after! evil

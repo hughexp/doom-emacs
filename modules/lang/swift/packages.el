@@ -1,11 +1,13 @@
 ;; -*- no-byte-compile: t; -*-
 ;;; lang/swift/packages.el
 
-(package! swift-mode :pin "e65a80a659c74d0a62b00dff183a0f7fc8385ce1")
+(package! swift-mode :pin "84059659de4da89d3d2902611cebed6d0423bf06")
 
-(if (featurep! +lsp)
-    (package! lsp-sourcekit :pin "948c3a35fd05496a77af2d8935e754db112cb4c3")
-  (when (featurep! :completion company)
-    (package! company-sourcekit :pin "abf9bc5a0102eb666d3aa6d6bf22f6efcc852781"))
-  (when (featurep! :checkers syntax)
+(if (modulep! +lsp)
+    (unless (modulep! :tools lsp +eglot)
+      (package! lsp-sourcekit :pin "1cd5e7d2699598a97bdbcd289d9a88b249db474c"))
+  (when (modulep! :completion company)
+    (package! company-sourcekit :pin "a1860ad4dd3a542acd2fa0dfac2a388cbdf4af0c"))
+  (when (and (modulep! :checkers syntax)
+             (not (modulep! :checkers syntax +flymake)))
     (package! flycheck-swift :pin "4c5ad401252400a78da395fd56a71e67ff8c2761")))

@@ -4,14 +4,16 @@
   :mode "\\.[px]?html?\\'"
   :mode "\\.\\(?:tpl\\|blade\\)\\(?:\\.php\\)?\\'"
   :mode "\\.erb\\'"
-  :mode "\\.l?eex\\'"
+  :mode "\\.[lh]?eex\\'"
   :mode "\\.jsp\\'"
   :mode "\\.as[cp]x\\'"
+  :mode "\\.ejs\\'"
   :mode "\\.hbs\\'"
   :mode "\\.mustache\\'"
   :mode "\\.svelte\\'"
   :mode "\\.twig\\'"
   :mode "\\.jinja2?\\'"
+  :mode "\\.eco\\'"
   :mode "wp-content/themes/.+/.+\\.php\\'"
   :mode "templates/.+\\.php\\'"
   :init
@@ -25,15 +27,15 @@
 
   ;; tidy is already defined by the format-all package. We redefine it to add
   ;; more sensible arguments to the tidy command.
-  (set-formatter! 'html-tidy
-    '("tidy" "-q" "-indent"
-      "--tidy-mark" "no"
-      "--drop-empty-elements" "no"
-      ("--show-body-only" "%s" (if +format-region-p "true" "auto"))
-      ("--indent-spaces" "%d" tab-width)
-      ("--indent-with-tabs" "%s" (if indent-tabs-mode "yes" "no"))
-      ("-xml" (memq major-mode '(nxml-mode xml-mode))))
-    :ok-statuses '(0 1))
+  ;; (set-formatter! 'html-tidy
+  ;;   '("tidy" "-q" "-indent"
+  ;;     "--tidy-mark" "no"
+  ;;     "--drop-empty-elements" "no"
+  ;;     ("--show-body-only" "%s" (if +format-region-p "true" "auto"))
+  ;;     ("--indent-spaces" "%d" tab-width)
+  ;;     ("--indent-with-tabs" "%s" (if indent-tabs-mode "yes" "no"))
+  ;;     ("-xml" (memq major-mode '(nxml-mode xml-mode))))
+  ;;   :ok-statuses '(0 1))
 
   (setq web-mode-enable-html-entities-fontification t
         web-mode-auto-close-style 1)
@@ -63,13 +65,11 @@
     (delq! nil web-mode-engines-auto-pairs))
 
   (add-to-list 'web-mode-engines-alist '("elixir" . "\\.eex\\'"))
+  (add-to-list 'web-mode-engines-alist '("phoenix" . "\\.[lh]eex\\'"))
 
-  (let ((types '("javascript" "jsx")))
-    (setq web-mode-comment-formats
-          (cl-remove-if (lambda (item) (member (car item) types))
-                        web-mode-comment-formats))
-    (dolist (type types)
-      (push (cons type "//") web-mode-comment-formats)))
+  ;; Use // instead of /* as the default comment delimited in JS
+  (setf (alist-get "javascript" web-mode-comment-formats nil nil #'equal)
+        "//")
 
   (add-hook! 'web-mode-hook
     (defun +web--fix-js-comments-h ()
@@ -87,7 +87,7 @@
 
   (map! :map web-mode-map
         (:localleader
-          :desc "Rehighlight buffer" "h" #'web-mode-buffer-highlight
+          :desc "Rehighlight buffer" "h" #'web-mode-reload
           :desc "Indent buffer"      "i" #'web-mode-buffer-indent
           (:prefix ("a" . "attribute")
             "b" #'web-mode-attribute-beginning
@@ -97,7 +97,7 @@
             "s" #'web-mode-attribute-select
             "k" #'web-mode-attribute-kill
             "p" #'web-mode-attribute-previous
-            "p" #'web-mode-attribute-transpose)
+            "t" #'web-mode-attribute-transpose)
           (:prefix ("b" . "block")
             "b" #'web-mode-block-beginning
             "c" #'web-mode-block-close
@@ -162,7 +162,13 @@
   (set-company-backend! 'slim-mode 'company-web-slim))
 
 
-(when (featurep! +lsp)
+(when (modulep! +lsp)
   (add-hook! '(html-mode-local-vars-hook
-               web-mode-local-vars-hook)
-             #'lsp!))
+               web-mode-local-vars-hook
+               nxml-mode-local-vars-hook)
+             :append #'lsp!))
+
+(when (modulep! +tree-sitter)
+  (add-hook! '(html-mode-local-vars-hook
+               mhtml-mode-local-vars-hook)
+             :append #'tree-sitter!))

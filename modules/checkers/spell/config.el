@@ -21,9 +21,9 @@
   ;;     if their binary is found.
   ;;   If one of the flags `+aspell', `+hunspell' or `+enchant' is given,
   ;;     only enable that spell checker.
-  (pcase (cond ((featurep! +aspell)   'aspell)
-               ((featurep! +hunspell) 'hunspell)
-               ((featurep! +enchant)  'enchant)
+  (pcase (cond ((modulep! +aspell)   'aspell)
+               ((modulep! +hunspell) 'hunspell)
+               ((modulep! +enchant)  'enchant)
                ((executable-find "aspell")    'aspell)
                ((executable-find "hunspell")  'hunspell)
                ((executable-find "enchant-2") 'enchant))
@@ -32,8 +32,6 @@
            ispell-extra-args '("--sug-mode=ultra"
                                "--run-together"))
 
-     (unless ispell-dictionary
-       (setq ispell-dictionary "english"))
      (unless ispell-aspell-dict-dir
        (setq ispell-aspell-dict-dir
              (ispell-get-aspell-config-value "dict-dir")))
@@ -43,7 +41,7 @@
      (unless ispell-personal-dictionary
        (setq ispell-personal-dictionary
              (expand-file-name (concat "ispell/" ispell-dictionary ".pws")
-                               doom-etc-dir)))
+                               doom-data-dir)))
 
      (add-hook! 'text-mode-hook
        (defun +spell-remove-run-together-switch-for-aspell-h ()
@@ -68,38 +66,45 @@
 ;;
 ;;; Implementations
 
-(eval-if! (not (featurep! +flyspell))
+(eval-if! (not (modulep! +flyspell))
 
     (use-package! spell-fu
       :when (executable-find "aspell")
       :hook (text-mode . spell-fu-mode)
       :general ([remap ispell-word] #'+spell/correct)
-      :init
+      :preface
       (defvar +spell-correct-interface
-        (cond ((featurep! :completion ivy)
+        (cond ((modulep! :completion ivy)
                #'+spell-correct-ivy-fn)
-              ((featurep! :completion helm)
+              ((modulep! :completion helm)
                #'+spell-correct-helm-fn)
               (#'+spell-correct-generic-fn))
         "Function to use to display corrections.")
 
+      :init
       (defvar +spell-excluded-faces-alist
         '((markdown-mode
            . (markdown-code-face
               markdown-html-attr-name-face
               markdown-html-attr-value-face
               markdown-html-tag-name-face
+              markdown-inline-code-face
               markdown-link-face
               markdown-markup-face
+              markdown-plain-url-face
               markdown-reference-face
               markdown-url-face))
           (org-mode
            . (org-block
               org-block-begin-line
               org-block-end-line
+              org-cite
+              org-cite-key
               org-code
               org-date
+              org-footnote
               org-formula
+              org-inline-src-block
               org-latex-and-related
               org-link
               org-meta-line
@@ -123,20 +128,29 @@
               font-lock-variable-name-face)))
         "Faces in certain major modes that spell-fu will not spellcheck.")
 
-      (setq spell-fu-directory (concat doom-etc-dir "spell-fu"))
-      (when (featurep! +everywhere)
+      (setq spell-fu-directory (concat doom-data-dir "spell-fu"))
+      (when (modulep! +everywhere)
         (add-hook! '(yaml-mode-hook
                      conf-mode-hook
                      prog-mode-hook)
                    #'spell-fu-mode))
       :config
-      (map! :after spell-fu
-            :map override
-            :n [return]
-            (cmds! (memq 'spell-fu-incorrect-face (face-at-point nil t))
-                   #'+spell/correct))
+      ;; TODO PR this fix upstream!
+      (defadvice! +spell--fix-face-detection-a (fn &rest args)
+        "`spell-fu--faces-at-point' uses face detection that won't penetrary
+overlays (like `hl-line'). This makes `spell-fu-faces-exclude' demonstrably less
+useful when it'll still spellcheck excluded faces on any line that `hl-line' is
+displayed on, even momentarily."
+        :around #'spell-fu--faces-at-point
+        (letf! (defun get-char-property (pos prop &optional obj)
+                 (or (plist-get (text-properties-at pos) prop)
+                     (funcall get-char-property pos prop obj)))
+          (apply fn args)))
 
       (defadvice! +spell--create-word-dict-a (_word words-file _action)
+        "Prevent `spell-fu--word-add-or-remove' from throwing non-existant
+directory errors when writing a personal dictionary file (by creating the
+directory first)."
         :before #'spell-fu--word-add-or-remove
         (unless (file-exists-p words-file)
           (make-directory (file-name-directory words-file) t)
@@ -146,7 +160,7 @@
       (add-hook! 'spell-fu-mode-hook
         (defun +spell-init-excluded-faces-h ()
           "Set `spell-fu-faces-exclude' according to `+spell-excluded-faces-alist'."
-          (when-let (excluded (alist-get major-mode +spell-excluded-faces-alist))
+          (when-let (excluded (cdr (cl-find-if #'derived-mode-p +spell-excluded-faces-alist :key #'car)))
             (setq-local spell-fu-faces-exclude excluded))))
 
       ;; TODO custom `spell-fu-check-range' function to reduce false positives
@@ -170,7 +184,7 @@
                  git-commit-mode-hook)
                #'flyspell-mode)
 
-    (when (featurep! +everywhere)
+    (when (modulep! +everywhere)
       (add-hook! '(yaml-mode-hook
                    conf-mode-hook
                    prog-mode-hook)
@@ -198,7 +212,10 @@ e.g. proselint and langtool."
     (add-hook 'flyspell-mode-hook #'+spell-init-flyspell-predicate-h)
 
     (let ((flyspell-correct
-           (cmds! (and (not (or mark-active (ignore-errors (evil-insert-state-p))))
+           (cmds! (and (not mark-active)
+                       (not (and (bound-and-true-p evil-local-mode)
+                                 (or (evil-insert-state-p)
+                                     (evil-emacs-state-p))))
                        (memq 'flyspell-incorrect (face-at-point nil t)))
                   #'flyspell-correct-at-point)))
       (map! :map flyspell-mouse-map
@@ -211,11 +228,12 @@ e.g. proselint and langtool."
     :commands flyspell-correct-previous
     :general ([remap ispell-word] #'flyspell-correct-at-point)
     :config
-    (cond ((and (featurep! :completion helm)
+    (cond ((and (modulep! :completion helm)
                 (require 'flyspell-correct-helm nil t)))
-          ((and (featurep! :completion ivy)
+          ((and (modulep! :completion ivy)
                 (require 'flyspell-correct-ivy nil t)))
-          ((require 'flyspell-correct-popup nil t)
+          ((modulep! :completion vertico)) ; vertico doesn't need any extra configuration
+          ((require 'flyspell-correct-popup nil t) ; only use popup if no compatible completion UI is enabled
            (setq flyspell-popup-correct-delay 0.8)
            (define-key popup-menu-keymap [escape] #'keyboard-quit))))
 
@@ -225,4 +243,7 @@ e.g. proselint and langtool."
     :config
     (setq flyspell-lazy-idle-seconds 1
           flyspell-lazy-window-idle-seconds 3)
+    ;; Fix #3357: flyspell-lazy inhibits flyspell entirely in message-mode
+    ;; derivatives (e.g. for notmuch users).
+    (setq-hook! 'message-mode-hook flyspell-lazy-disallow-buffers nil)
     (flyspell-lazy-mode +1)))

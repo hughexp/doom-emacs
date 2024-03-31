@@ -12,7 +12,7 @@
 ;;; Compatibilty fixes
 
 ;; Curse Lion and its sudden but inevitable fullscreen mode!
-;; NOTE Meaningless to railwaycat's emacs-mac build
+;; This is meaningless to railwaycat's emacs-mac build though.
 (setq ns-use-native-fullscreen nil)
 
 ;; Visit files opened outside of Emacs in existing frame, not a new one
@@ -29,34 +29,28 @@
      (require 'ns-auto-titlebar nil t)
      (ns-auto-titlebar-mode +1))
 
-;; HACK On MacOS, disabling the menu bar makes MacOS treat Emacs as a
-;;      non-application window -- which means it doesn't automatically capture
-;;      focus when it is started, among other things. We enable menu-bar-lines
-;;      there, but we still want it disabled in terminal frames because there it
-;;      activates an ugly menu bar.
-(add-hook! '(window-setup-hook after-make-frame-functions)
-  (defun doom-init-menu-bar-in-gui-frames-h (&optional frame)
-    "Re-enable menu-bar-lines in GUI frames."
-    (when-let (frame (or frame (selected-frame)))
-      (when (display-graphic-p frame)
-        (set-frame-parameter frame 'menu-bar-lines 1)))))
-
 ;; Integrate with Keychain
 (after! auth-source
   (pushnew! auth-sources 'macos-keychain-internet 'macos-keychain-generic))
+
+;; Delete files to trash on macOS, as an extra layer of precaution against
+;; accidentally deleting wanted files.
+(setq delete-by-moving-to-trash t)
 
 
 ;;
 ;;; Packages
 
 (use-package! osx-trash
+  ;; DEPRECATED: Not needed on Emacs 29+. Remove when dropping 28 support.
+  ;;   Fixed by https://debbugs.gnu.org/cgi/bugreport.cgi?bug=21340.
+  :when (< emacs-major-version 29)
   :commands osx-trash-move-file-to-trash
   :init
-  ;; Delete files to trash on macOS, as an extra layer of precaution against
-  ;; accidentally deleting wanted files.
-  (setq delete-by-moving-to-trash t)
-
   ;; Lazy load `osx-trash'
-  (and IS-MAC
-       (not (fboundp 'system-move-file-to-trash))
-       (defalias #'system-move-file-to-trash #'osx-trash-move-file-to-trash)))
+  (when (not (fboundp 'system-move-file-to-trash))
+    (defun system-move-file-to-trash (file)
+      "Move FILE to trash."
+      (when (and (not (featurep :system 'linux))
+                 (not (file-remote-p default-directory)))
+        (osx-trash-move-file-to-trash file)))))

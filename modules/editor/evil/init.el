@@ -19,17 +19,18 @@
 ;;    disable modules, and to reduce the effort required to maintain our copy of
 ;;    `evil-collection-list' (now I can just copy it from time to time).
 
-(when (and doom-interactive-p
-           (not doom-reloading-p)
-           (featurep! +everywhere))
+(when (and (not noninteractive)
+           (not (doom-context-p 'reload))
+           (modulep! +everywhere))
 
-  (setq evil-collection-company-use-tng (featurep! :completion company +tng)
+  (setq evil-collection-company-use-tng (modulep! :completion company +tng)
         ;; must be set before evil/evil-collection is loaded
         evil-want-keybinding nil)
 
   (defvar +evil-collection-disabled-list
     '(anaconda-mode
       buff-menu
+      calc
       comint
       company
       custom
@@ -37,16 +38,18 @@
       elisp-mode
       ert
       free-keys
-      help
       helm
+      help
       image
+      indent
       kotlin-mode
-      occur
-      package-menu
-      ruby-mode
+      lispy
+      outline
+      replace
+      shortdoc
       simple
       slime
-      lispy)
+      tab-bar)
     "A list of `evil-collection' modules to ignore. See the definition of this
 variable for an explanation of the defaults (in comments). See
 `evil-collection-mode-list' for a list of available options.")
@@ -55,6 +58,11 @@ variable for an explanation of the defaults (in comments). See
 
   ;; We do this ourselves, and better.
   (defvar evil-collection-want-unimpaired-p nil)
+  ;; Doom binds goto-reference on gD and goto-assignments on gA ourselves
+  (defvar evil-collection-want-find-usages-bindings-p nil)
+  ;; Reduces keybind conflicts between outline-mode and org-mode (which is
+  ;; derived from outline-mode).
+  (defvar evil-collection-outline-enable-in-minor-mode-p nil)
 
   ;; We handle loading evil-collection ourselves
   (defvar evil-collection--supported-modes nil)
@@ -84,54 +92,75 @@ variable for an explanation of the defaults (in comments). See
       anaconda-mode
       apropos
       arc-mode
+      atomic-chrome
       auto-package-update
+      beginend
+      bluetooth
       bm
       bookmark
       (buff-menu "buff-menu")
+      bufler
       calc
       calendar
       cider
       cmake-mode
+      color-rg
       comint
       company
       compile
+      consult
+      corfu
+      crdt
       (custom cus-edit)
       cus-theme
-      daemons
       dashboard
+      daemons
       deadgrep
       debbugs
       debug
+      devdocs
+      dictionary
+      diff-hl
       diff-mode
       dired
       dired-sidebar
       disk-usage
+      distel
       doc-view
       docker
       ebib
+      ebuku
       edbi
       edebug
       ediff
       eglot
+      elpaca
+      ement
       explain-pause-mode
+      eldoc
       elfeed
       elisp-mode
       elisp-refs
       elisp-slime-nav
+      embark
       emms
+      ,@(if (> emacs-major-version 28) '(emoji))
       epa
       ert
       eshell
       eval-sexp-fu
       evil-mc
       eww
+      fanyi
       finder
       flycheck
       flymake
+      forge
       free-keys
       geiser
       ggtags
       git-timemachine
+      gited
       gnus
       go-mode
       grep
@@ -143,17 +172,19 @@ variable for an explanation of the defaults (in comments). See
       hg-histedit
       hungry-delete
       ibuffer
-      image
+      (image image-mode)
       image-dired
       image+
       imenu
       imenu-list
+      (indent "indent")
       indium
       info
       ivy
       js2-mode
       leetcode
       lispy
+      lms
       log-edit
       log-view
       lsp-ui-imenu
@@ -161,18 +192,23 @@ variable for an explanation of the defaults (in comments). See
       kotlin-mode
       macrostep
       man
-      magit
+      (magit magit-repos magit-submodule)
+      magit-section
       magit-todos
+      markdown-mode
       monky
+      mpc
+      mpdel
       mu4e
       mu4e-conversation
       neotree
       newsticker
       notmuch
       nov
-      (occur replace)
       omnisharp
+      org
       org-present
+      org-roam
       osx-dictionary
       outline
       p4
@@ -186,35 +222,51 @@ variable for an explanation of the defaults (in comments). See
       python
       quickrun
       racer
+      racket-describe
       realgud
       reftex
+      replace
       restclient
       rg
+      ripgrep
       rjsx-mode
       robe
       rtags
       ruby-mode
+      scheme
+      scroll-lock
+      selectrum
+      sh-script
+      ,@(if (> emacs-major-version 27) '(shortdoc))
       simple
+      simple-mpc
       slime
       sly
+      snake
+      so-long
       speedbar
+      tab-bar
       tablist
       tar-mode
+      telega
       (term term ansi-term multi-term)
       tetris
-      ,@(if EMACS27+ '(thread))
+      thread
       tide
       timer-list
       transmission
       trashed
+      tuareg
       typescript-mode
       vc-annotate
       vc-dir
       vc-git
       vdiff
+      vertico
       view
       vlf
       vterm
+      vundo
       w3m
       wdired
       wgrep
@@ -222,7 +274,9 @@ variable for an explanation of the defaults (in comments). See
       woman
       xref
       xwidget
+      yaml-mode
       youtube-dl
+      zmusic
       (ztree ztree-diff)))
 
   (defun +evil-collection-init (module &optional disabled-list)
@@ -231,16 +285,16 @@ variable for an explanation of the defaults (in comments). See
 Unlike `evil-collection-init', this respects `+evil-collection-disabled-list',
 and complains if a module is loaded too early (during startup)."
     (unless (memq (or (car-safe module) module) disabled-list)
-      (doom-log "Initialized evil-collection-%s %s"
+      (doom-log "editor:evil: loading evil-collection-%s %s"
                 (or (car-safe module) module)
-                (if doom-init-time "" "(too early!)"))
+                (if after-init-time "" "(too early!)"))
       (with-demoted-errors "evil-collection error: %s"
         (evil-collection-init (list module)))))
 
-  (defadvice! +evil-collection-disable-blacklist-a (orig-fn)
+  (defadvice! +evil-collection-disable-blacklist-a (fn)
     :around #'evil-collection-vterm-toggle-send-escape  ; allow binding to ESC
     (let (evil-collection-key-blacklist)
-      (funcall-interactively orig-fn)))
+      (funcall-interactively fn)))
 
   ;; These modes belong to packages that Emacs always loads at startup, causing
   ;; evil-collection and it's co-packages to all load immediately. We avoid this
@@ -250,9 +304,10 @@ and complains if a module is loaded too early (during startup)."
     (setq evil-collection-key-blacklist
           (append (list doom-leader-key doom-localleader-key
                         doom-leader-alt-key)
-                  (when (featurep! :tools lookup)
+                  evil-collection-key-blacklist
+                  (when (modulep! :tools lookup)
                     '("gd" "gf" "K"))
-                  (when (featurep! :tools eval)
+                  (when (modulep! :tools eval)
                     '("gr" "gR"))
                   '("[" "]" "gz" "<escape>")))
 
@@ -260,29 +315,38 @@ and complains if a module is loaded too early (during startup)."
       "q" #'kill-current-buffer
       "d" #'process-menu-delete-process)
 
-    (mapc #'+evil-collection-init '(comint custom help)))
+    (mapc #'+evil-collection-init '(comint custom)))
 
   ;; ...or on first invokation of their associated major/minor modes.
   (after! evil
+    ;; Emacs loads these two packages immediately, at startup, which needlessly
+    ;; convolutes load order for evil-collection-help.
+    (add-transient-hook! 'help-mode
+      (+evil-collection-init 'help))
     (add-transient-hook! 'Buffer-menu-mode
       (+evil-collection-init '(buff-menu "buff-menu")))
+    (add-transient-hook! 'calc-mode
+      (+evil-collection-init 'calc))
     (add-transient-hook! 'image-mode
       (+evil-collection-init 'image))
     (add-transient-hook! 'emacs-lisp-mode
       (+evil-collection-init 'elisp-mode))
     (add-transient-hook! 'occur-mode
-      (+evil-collection-init '(occur replace)))
+      (+evil-collection-init 'replace))
+    (add-transient-hook! 'indent-rigidly
+      (+evil-collection-init '(indent "indent")))
     (add-transient-hook! 'minibuffer-setup-hook
       (when evil-collection-setup-minibuffer
         (+evil-collection-init 'minibuffer)
         (evil-collection-minibuffer-insert)))
     (add-transient-hook! 'process-menu-mode
       (+evil-collection-init '(process-menu simple)))
+    (add-transient-hook! 'shortdoc-mode
+      (+evil-collection-init 'shortdoc))
     (add-transient-hook! 'tabulated-list-mode
       (+evil-collection-init 'tabulated-list))
-    (when EMACS27+
-      (add-transient-hook! 'tab-bar-mode
-        (+evil-collection-init 'tab-bar)))
+    (add-transient-hook! 'tab-bar-mode
+      (+evil-collection-init 'tab-bar))
 
     ;; HACK Do this ourselves because evil-collection break's `eval-after-load'
     ;;      load order by loading their target plugin before applying keys. This

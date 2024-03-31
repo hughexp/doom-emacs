@@ -17,7 +17,7 @@ This is ignored by ccls.")
   `((c-mode . nil)
     (c++-mode
      . ,(list "-std=c++1z" ; use C++17 draft by default
-              (when IS-MAC
+              (when (featurep :system 'macos)
                 ;; NOTE beware: you'll get abi-inconsistencies when passing
                 ;; std-objects to libraries linked with libstdc++ (e.g. if you
                 ;; use boost which wasn't compiled with libc++)
@@ -35,7 +35,7 @@ This is ignored by ccls.")
 (use-package! cc-mode
   :mode ("\\.mm\\'" . objc-mode)
   ;; Use `c-mode'/`c++-mode'/`objc-mode' depending on heuristics
-  :mode ("\\.h\\'" . +cc-c-c++-objc-mode) 
+  :mode ("\\.h\\'" . +cc-c-c++-objc-mode)
   ;; Ensure find-file-at-point recognize system libraries in C modes. It must be
   ;; set up before the likes of irony/lsp are initialized. Also, we use
   ;; local-vars hooks to ensure these only run in their respective major modes,
@@ -48,6 +48,17 @@ This is ignored by ccls.")
   (set-docsets! 'c-mode "C")
   (set-docsets! 'c++-mode "C++" "Boost")
   (set-electric! '(c-mode c++-mode objc-mode java-mode) :chars '(?\n ?\} ?\{))
+  (set-formatter!
+    'clang-format
+    '("clang-format"
+      "-assume-filename"
+      (or (buffer-file-name)
+          (cdr (assoc major-mode
+                      '((c-mode        . ".c")
+                        (c++-mode      . ".cpp")
+                        (cuda-mode     . ".cu")
+                        (protobuf-mode . ".proto"))))))
+    :modes '(c-mode c++-mode protobuf-mode cuda-mode))
   (set-rotate-patterns! 'c++-mode
     :symbols '(("public" "protected" "private")
                ("class" "struct")))
@@ -67,12 +78,19 @@ This is ignored by ccls.")
     :return "return"
     :yield "#require")
 
+  (add-to-list 'find-sibling-rules '("/\\([^/]+\\)\\.c\\(c\\|pp\\)\\'" "\\1.\\(h\\|hh\\|hpp\\)"))
+
+  (when (modulep! +tree-sitter)
+    (add-hook! '(c-mode-local-vars-hook
+                 c++-mode-local-vars-hook)
+               :append #'tree-sitter!))
+
   ;; HACK Suppress 'Args out of range' error in when multiple modifications are
   ;;      performed at once in a `c++-mode' buffer, e.g. with `iedit' or
   ;;      multiple cursors.
-  (undefadvice! +cc--suppress-silly-errors-a (orig-fn &rest args)
+  (undefadvice! +cc--suppress-silly-errors-a (fn &rest args)
     :around #'c-after-change-mark-abnormal-strings
-    (ignore-errors (apply orig-fn args)))
+    (ignore-errors (apply fn args)))
 
   ;; Custom style, based off of linux
   (setq c-basic-offset tab-width
@@ -120,7 +138,7 @@ This is ignored by ccls.")
 
 
 (use-package! irony
-  :unless (featurep! +lsp)
+  :unless (modulep! +lsp)
   :commands irony-install-server
   ;; Initialize compilation database, if present. Otherwise, fall back on
   ;; `+cc-default-compiler-options'.
@@ -128,7 +146,7 @@ This is ignored by ccls.")
   ;; Only initialize `irony-mode' if the server is available. Otherwise fail
   ;; quietly and gracefully.
   :hook ((c-mode-local-vars c++-mode-local-vars objc-mode-local-vars) . +cc-init-irony-mode-maybe-h)
-  :preface (setq irony-server-install-prefix (concat doom-etc-dir "irony-server/"))
+  :preface (setq irony-server-install-prefix (concat doom-data-dir "irony-server/"))
   :config
   (defun +cc-init-irony-mode-maybe-h ()
     (if (file-directory-p irony-server-install-prefix)
@@ -141,11 +159,12 @@ This is ignored by ccls.")
     :hook (irony-mode . irony-eldoc))
 
   (use-package! flycheck-irony
-    :when (featurep! :checkers syntax)
+    :when (and (modulep! :checkers syntax)
+               (not (modulep! :checkers syntax +flymake)))
     :config (flycheck-irony-setup))
 
   (use-package! company-irony
-    :when (featurep! :completion company)
+    :when (modulep! :completion company)
     :init (set-company-backend! 'irony-mode '(:separate company-irony-c-headers company-irony))
     :config (require 'company-irony-c-headers)))
 
@@ -154,10 +173,14 @@ This is ignored by ccls.")
 ;; Major modes
 
 (after! cmake-mode
-  (set-docsets! 'cmake-mode "CMake"))
+  (set-docsets! 'cmake-mode "CMake")
+  (set-popup-rule! "^\\*CMake Help\\*" :size 0.4 :ttl t)
+  (set-lookup-handlers! 'cmake-mode
+    :documentation '+cc-cmake-lookup-documentation-fn))
+
 
 (use-package! company-cmake  ; for `cmake-mode'
-  :when (featurep! :completion company)
+  :when (modulep! :completion company)
   :after cmake-mode
   :config (set-company-backend! 'cmake-mode 'company-cmake))
 
@@ -167,7 +190,7 @@ This is ignored by ccls.")
 
 
 (use-package! company-glsl  ; for `glsl-mode'
-  :when (featurep! :completion company)
+  :when (modulep! :completion company)
   :after glsl-mode
   :config (set-company-backend! 'glsl-mode 'company-glsl))
 
@@ -176,10 +199,10 @@ This is ignored by ccls.")
 ;; Rtags Support
 
 (use-package! rtags
-  :unless (featurep! +lsp)
+  :unless (modulep! +lsp)
   ;; Only initialize rtags-mode if rtags and rdm are available.
   :hook ((c-mode-local-vars c++-mode-local-vars objc-mode-local-vars) . +cc-init-rtags-maybe-h)
-  :preface (setq rtags-install-path (concat doom-etc-dir "rtags/"))
+  :preface (setq rtags-install-path (concat doom-data-dir "rtags/"))
   :config
   (defun +cc-init-rtags-maybe-h ()
     "Start an rtags server in c-mode and c++-mode buffers.
@@ -192,8 +215,8 @@ If rtags or rdm aren't available, fail silently instead of throwing a breaking e
         rtags-use-bookmarks nil
         rtags-completions-enabled nil
         rtags-display-result-backend
-        (cond ((featurep! :completion ivy)  'ivy)
-              ((featurep! :completion helm) 'helm)
+        (cond ((modulep! :completion ivy)  'ivy)
+              ((modulep! :completion helm) 'helm)
               ('default))
         ;; These executables are named rtags-* on debian
         rtags-rc-binary-name
@@ -219,18 +242,23 @@ If rtags or rdm aren't available, fail silently instead of throwing a breaking e
   ;; than display a jarring confirmation prompt for killing it.
   (add-hook! 'kill-emacs-hook (ignore-errors (rtags-cancel-process)))
 
-  (add-hook 'rtags-jump-hook #'better-jumper-set-jump)
-  (add-hook 'rtags-after-find-file-hook #'recenter))
+  (add-hook 'rtags-jump-hook #'better-jumper-set-jump))
 
 
 ;;
 ;; LSP
 
-(when (featurep! +lsp)
+(when (modulep! +lsp)
   (add-hook! '(c-mode-local-vars-hook
                c++-mode-local-vars-hook
-               objc-mode-local-vars-hook)
-             #'lsp!)
+               objc-mode-local-vars-hook
+               cmake-mode-local-vars-hook
+               ;; HACK Can't use cude-mode-local-vars-hook because cuda-mode
+               ;;   isn't a proper major mode (just a plain function
+               ;;   masquarading as one, so your standard mode hooks won't fire
+               ;;   from switching to cuda-mode).
+               cuda-mode-hook)
+             :append #'lsp!)
 
   (map! :after ccls
         :map (c-mode-map c++-mode-map)
@@ -251,7 +279,7 @@ If rtags or rdm aren't available, fail silently instead of throwing a breaking e
           :desc "References (Read)"     "r" #'+cc/ccls-show-references-read
           :desc "References (Write)"    "w" #'+cc/ccls-show-references-write)))
 
-  (when (featurep! :tools lsp +eglot)
+  (when (modulep! :tools lsp +eglot)
     ;; Map eglot specific helper
     (map! :localleader
           :after cc-mode
@@ -260,8 +288,7 @@ If rtags or rdm aren't available, fail silently instead of throwing a breaking e
 
     ;; NOTE : This setting is untested yet
     (after! eglot
-      ;; IS-MAC custom configuration
-      (when IS-MAC
+      (when (featurep :system 'macos)
         (add-to-list 'eglot-workspace-configuration
                      `((:ccls . ((:clang . ,(list :extraArgs ["-isystem/Library/Developer/CommandLineTools/usr/include/c++/v1"
                                                               "-isystem/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include"
@@ -269,13 +296,13 @@ If rtags or rdm aren't available, fail silently instead of throwing a breaking e
                                                   :resourceDir (cdr (doom-call-process "clang" "-print-resource-dir"))))))))))))
 
 (use-package! ccls
-  :when (featurep! +lsp)
-  :unless (featurep! :tools lsp +eglot)
-  :hook (lsp-lens-mode . ccls-code-lens-mode)
+  :when (modulep! +lsp)
+  :unless (modulep! :tools lsp +eglot)
+  :defer t
   :init
   (defvar ccls-sem-highlight-method 'font-lock)
   (after! projectile
-    (add-to-list 'projectile-globally-ignored-directories ".ccls-cache")
+    (add-to-list 'projectile-globally-ignored-directories "^.ccls-cache$")
     (add-to-list 'projectile-project-root-files-bottom-up ".ccls-root")
     (add-to-list 'projectile-project-root-files-top-down-recurring "compile_commands.json"))
   ;; Avoid using `:after' because it ties the :config below to when `lsp-mode'
@@ -288,14 +315,12 @@ If rtags or rdm aren't available, fail silently instead of throwing a breaking e
   (setq-hook! 'lsp-configure-hook
     ccls-sem-highlight-method (if lsp-enable-semantic-highlighting
                                   ccls-sem-highlight-method))
-  (when (or IS-MAC IS-LINUX)
-    (let ((cpu-count-command (cond (IS-MAC '("sysctl" "-n" "hw.ncpu"))
-                                   (IS-LINUX '("nproc"))
-                                   (t (error "unreachable code")))))
-      (setq ccls-initialization-options
-            `(:index (:trackDependency 1
-                      :threads ,(max 1 (/ (string-to-number (cdr (apply #'doom-call-process cpu-count-command))) 2)))))))
-  (when IS-MAC
+  (when (or (featurep :system 'macos)
+            (featurep :system 'linux))
+    (setq ccls-initialization-options
+          `(:index (:trackDependency 1
+                    :threads ,(max 1 (/ (doom-system-cpus) 2))))))
+  (when (featurep :system 'macos)
     (setq ccls-initialization-options
           (append ccls-initialization-options
                   `(:clang ,(list :extraArgs ["-isystem/Library/Developer/CommandLineTools/usr/include/c++/v1"

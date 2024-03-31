@@ -3,17 +3,21 @@
 (defvar +emacs-lisp-enable-extra-fontification t
   "If non-nil, highlight special forms, and defined functions and variables.")
 
-(defvar +emacs-lisp-outline-regexp "[ \t]*;;;;* [^ \t\n]"
+(defvar +emacs-lisp-outline-regexp "[ \t]*;;;\\(;*\\**\\) [^ \t\n]"
   "Regexp to use for `outline-regexp' in `emacs-lisp-mode'.
 This marks a foldable marker for `outline-minor-mode' in elisp buffers.")
 
-(defvar +emacs-lisp-disable-flycheck-in-dirs
-  (list doom-emacs-dir doom-private-dir)
-  "List of directories to disable `emacs-lisp-checkdoc' in.
+(defvar +emacs-lisp-linter-warnings
+  '(not free-vars    ; don't complain about unknown variables
+        noruntime    ; don't complain about unknown function calls
+        unresolved)  ; don't complain about undefined functions
+  "The value for `byte-compile-warnings' in non-packages.
 
-This checker tends to produce a lot of false positives in your .emacs.d and
-private config, so it is mostly useless there. However, special hacks are
-employed so that flycheck still does *some* helpful linting.")
+This reduces the verbosity of flycheck in Emacs configs and scripts, which are
+so stateful that the deluge of false positives (from the byte-compiler,
+package-lint, and checkdoc) can be more overwhelming than helpful.
+
+See `+emacs-lisp-non-package-mode' for details.")
 
 
 ;; `elisp-mode' is loaded at startup. In order to lazy load its config we need
@@ -26,6 +30,7 @@ employed so that flycheck still does *some* helpful linting.")
 
 (use-package! elisp-mode
   :mode ("\\.Cask\\'" . emacs-lisp-mode)
+  :interpreter ("doomscript" . emacs-lisp-mode)
   :config
   (set-repl-handler! '(emacs-lisp-mode lisp-interaction-mode) #'+emacs-lisp/open-repl)
   (set-eval-handler! '(emacs-lisp-mode lisp-interaction-mode) #'+emacs-lisp-eval)
@@ -34,6 +39,7 @@ employed so that flycheck still does *some* helpful linting.")
     :documentation #'+emacs-lisp-lookup-documentation)
   (set-docsets! '(emacs-lisp-mode lisp-interaction-mode) "Emacs Lisp")
   (set-ligatures! 'emacs-lisp-mode :lambda "lambda")
+  (set-formatter! 'lisp-indent #'apheleia-indent-lisp-buffer :modes '(emacs-lisp-mode))
   (set-rotate-patterns! 'emacs-lisp-mode
     :symbols '(("t" "nil")
                ("let" "let*")
@@ -51,15 +57,29 @@ employed so that flycheck still does *some* helpful linting.")
     ;; unreadable. Since Emacs' lisp indenter doesn't respect this variable it's
     ;; safe to ignore this setting otherwise.
     tab-width 8
-    ;; shorter name in modeline
-    mode-name "Elisp"
     ;; Don't treat autoloads or sexp openers as outline headers, we have
     ;; hideshow for that.
     outline-regexp +emacs-lisp-outline-regexp
-    ;; Fixed indenter that intends plists sensibly.
-    lisp-indent-function #'+emacs-lisp-indent-function)
+    outline-level #'+emacs-lisp-outline-level)
 
-  ;; variable-width indentation is superior in elisp. Otherwise, `dtrt-indent'
+  ;; DEPRECATED: Remove when 27.x support is dropped.
+  (when (< emacs-major-version 28)
+    ;; As of Emacs 28+, `emacs-lisp-mode' uses a shorter label in the mode-line
+    ;; ("ELisp/X", where X = l or d, depending on `lexical-binding'). In <=27,
+    ;; it uses "Emacs-Lisp". The former is more useful, so I backport it:
+    (setq-hook! 'emacs-lisp-mode-hook
+      mode-name `("ELisp"
+                  (lexical-binding (:propertize "/l"
+                                    help-echo "Using lexical-binding mode")
+                                   (:propertize "/d"
+                                    help-echo "Using old dynamic scoping mode"
+                                    face warning
+                                    mouse-face mode-line-highlight)))))
+
+  ;; Introduces logic to improve plist indentation in emacs-lisp-mode.
+  (advice-add #'calculate-lisp-indent :override #'+emacs-lisp--calculate-lisp-indent-a)
+
+  ;; Variable-width indentation is superior in elisp. Otherwise, `dtrt-indent'
   ;; and `editorconfig' would force fixed indentation on elisp.
   (add-to-list 'doom-detect-indentation-excluded-modes 'emacs-lisp-mode)
 
@@ -75,10 +95,19 @@ employed so that flycheck still does *some* helpful linting.")
              ;; Ensure straight sees modifications to installed packages
              #'+emacs-lisp-init-straight-maybe-h)
 
-  ;; Flycheck's two emacs-lisp checkers produce a *lot* of false positives in
-  ;; emacs configs, so we disable `emacs-lisp-checkdoc' and reduce the
-  ;; `emacs-lisp' checker's verbosity.
-  (add-hook 'flycheck-mode-hook #'+emacs-lisp-reduce-flycheck-errors-in-emacs-config-h)
+  ;; UX: Both Flycheck's and Flymake's two emacs-lisp checkers produce a *lot*
+  ;;   of false positives in non-packages (like Emacs configs or elisp scripts),
+  ;;   so I disable `checkdoc' (`emacs-lisp-checkdoc', `elisp-flymake-checkdoc')
+  ;;   and set `byte-compile-warnings' to a subset that makes more sense (see
+  ;;   `+emacs-lisp-linter-warnings')
+  (add-hook! '(flycheck-mode-hook flymake-mode-hook) #'+emacs-lisp-non-package-mode)
+
+  (defadvice! +syntax--fix-elisp-flymake-load-path (orig-fn &rest args)
+    "Set load path for elisp byte compilation Flymake backend"
+    :around #'elisp-flymake-byte-compile
+    (let ((elisp-flymake-byte-compile-load-path
+           (append elisp-flymake-byte-compile-load-path load-path)))
+      (apply orig-fn args)))
 
   ;; Enhance elisp syntax highlighting, by highlighting Doom-specific
   ;; constructs, defined symbols, and truncating :pin's in `package!' calls.
@@ -86,31 +115,28 @@ employed so that flycheck still does *some* helpful linting.")
    'emacs-lisp-mode
    (append `(;; custom Doom cookies
              ("^;;;###\\(autodef\\|if\\|package\\)[ \n]" (1 font-lock-warning-face t)))
-           ;; Shorten the :pin of `package!' statements to 10 characters
-           `(("(package!\\_>" (0 (+emacs-lisp-truncate-pin))))
            ;; highlight defined, special variables & functions
            (when +emacs-lisp-enable-extra-fontification
              `((+emacs-lisp-highlight-vars-and-faces . +emacs-lisp--face)))))
  
-  ;; Recenter window after following definition
-  (advice-add #'elisp-def :after #'doom-recenter-a)
-
-  (defadvice! +emacs-lisp-append-value-to-eldoc-a (orig-fn sym)
+  (defadvice! +emacs-lisp-append-value-to-eldoc-a (fn sym)
     "Display variable value next to documentation in eldoc."
     :around #'elisp-get-var-docstring
-    (when-let (ret (funcall orig-fn sym))
-      (concat ret " "
-              (let* ((truncated " [...]")
-                     (print-escape-newlines t)
-                     (str (symbol-value sym))
-                     (str (prin1-to-string str))
-                     (limit (- (frame-width) (length ret) (length truncated) 1)))
-                (format (format "%%0.%ds%%s" limit)
-                        (propertize str 'face 'warning)
-                        (if (< (length str) limit) "" truncated))))))
+    (when-let (ret (funcall fn sym))
+      (if (boundp sym)
+          (concat ret " "
+                  (let* ((truncated " [...]")
+                         (print-escape-newlines t)
+                         (str (symbol-value sym))
+                         (str (prin1-to-string str))
+                         (limit (- (frame-width) (length ret) (length truncated) 1)))
+                    (format (format "%%0.%ds%%s" (max limit 0))
+                            (propertize str 'face 'warning)
+                            (if (< (length str) limit) "" truncated))))
+        ret)))
 
   (map! :localleader
-        :map emacs-lisp-mode-map
+        :map (emacs-lisp-mode-map lisp-interaction-mode-map)
         :desc "Expand macro" "m" #'macrostep-expand
         (:prefix ("d" . "debug")
           "f" #'+emacs-lisp/edebug-instrument-defun-on
@@ -131,27 +157,31 @@ employed so that flycheck still does *some* helpful linting.")
   :config
   (set-lookup-handlers! 'inferior-emacs-lisp-mode
     :definition    #'+emacs-lisp-lookup-definition
-    :documentation #'+emacs-lisp-lookup-documentation))
+    :documentation #'+emacs-lisp-lookup-documentation)
 
-;; Adapted from http://www.modernemacs.com/post/comint-highlighting/ to add
-;; syntax highlighting to ielm REPLs.
-(add-hook! 'ielm-mode-hook
-  (defun +emacs-lisp-init-syntax-highlighting-h ()
-    (font-lock-add-keywords
-     nil (cl-loop for (matcher . match-highlights)
-                  in (append lisp-el-font-lock-keywords-2 lisp-cl-font-lock-keywords-2)
-                  collect
-                  `((lambda (limit)
-                      (and ,(if (symbolp matcher)
-                                `(,matcher limit)
-                              `(re-search-forward ,matcher limit t))
-                           ;; Only highlight matches after the prompt
-                           (> (match-beginning 0) (car comint-last-prompt))
-                           ;; Make sure we're not in a comment or string
-                           (let ((state (sp--syntax-ppss)))
-                             (not (or (nth 3 state)
-                                      (nth 4 state))))))
-                    ,@match-highlights)))))
+  ;; Adapted from http://www.modernemacs.com/post/comint-highlighting/ to add
+  ;; syntax highlighting to ielm REPLs.
+  (setq ielm-font-lock-keywords
+        (append '(("\\(^\\*\\*\\*[^*]+\\*\\*\\*\\)\\(.*$\\)"
+                   (1 font-lock-comment-face)
+                   (2 font-lock-constant-face)))
+                (when (require 'highlight-numbers nil t)
+                  (highlight-numbers--get-regexp-for-mode 'emacs-lisp-mode))
+                (cl-loop for (matcher . match-highlights)
+                         in (append lisp-el-font-lock-keywords-2
+                                    lisp-cl-font-lock-keywords-2)
+                         collect
+                         `((lambda (limit)
+                             (when ,(if (symbolp matcher)
+                                        `(,matcher limit)
+                                      `(re-search-forward ,matcher limit t))
+                               ;; Only highlight matches after the prompt
+                               (> (match-beginning 0) (car comint-last-prompt))
+                               ;; Make sure we're not in a comment or string
+                               (let ((state (syntax-ppss)))
+                                 (not (or (nth 3 state)
+                                          (nth 4 state))))))
+                           ,@match-highlights)))))
 
 
 ;;
@@ -164,37 +194,49 @@ employed so that flycheck still does *some* helpful linting.")
 
 
 (use-package! flycheck-cask
-  :when (featurep! :checkers syntax)
+  :when (and (modulep! :checkers syntax)
+             (not (modulep! :checkers syntax +flymake)))
   :defer t
   :init
   (add-hook! 'emacs-lisp-mode-hook
     (add-hook 'flycheck-mode-hook #'flycheck-cask-setup nil t)))
 
 
+(use-package! flycheck-package
+  :when (and (modulep! :checkers syntax)
+             (not (modulep! :checkers syntax +flymake)))
+  :after flycheck
+  :config (flycheck-package-setup))
+
+
 (use-package! elisp-demos
   :defer t
   :init
-  (advice-add 'describe-function-1 :after #'elisp-demos-advice-describe-function-1)
-  (advice-add 'helpful-update :after #'elisp-demos-advice-helpful-update)
+  (advice-add #'describe-function-1 :after #'elisp-demos-advice-describe-function-1)
+  (advice-add #'helpful-update :after #'elisp-demos-advice-helpful-update)
   :config
-  (defadvice! +emacs-lisp--add-doom-elisp-demos-a (orig-fn symbol)
-    "Add Doom's own demos to help buffers."
-    :around #'elisp-demos--search
-    (or (funcall orig-fn symbol)
-        (when-let (demos-file (doom-glob doom-docs-dir "api.org"))
-          (with-temp-buffer
-            (insert-file-contents demos-file)
-            (goto-char (point-min))
-            (when (re-search-forward
-                   (format "^\\*\\*\\* %s$" (regexp-quote (symbol-name symbol)))
-                   nil t)
-              (let (beg end)
-                (forward-line 1)
-                (setq beg (point))
-                (if (re-search-forward "^\\*" nil t)
-                    (setq end (line-beginning-position))
-                  (setq end (point-max)))
-                (string-trim (buffer-substring-no-properties beg end)))))))))
+  ;; Add Doom's core and module demo files, so additional demos can be specified
+  ;; by end-users (in $DOOMDIR/demos.org), by modules (modules/X/Y/demos.org),
+  ;; or Doom's core (lisp/demos.org).
+  (dolist (file (doom-module-locate-paths (doom-module-list) "demos.org"))
+    (add-to-list 'elisp-demos-user-files file))
+
+  ;; HACK: These functions open Org files non-interactively without any
+  ;;   performance optimizations. Given how prone org-mode is to being tied to
+  ;;   expensive functionality, this will often introduce unexpected freezes
+  ;;   without this advice.
+  ;; TODO: PR upstream?
+  (defvar org-inhibit-startup)
+  (defvar org-mode-hook)
+  (defadvice! +emacs-lisp--optimize-org-init-a (fn &rest args)
+    "Disable unrelated functionality to optimize calls to `org-mode'."
+    :around #'elisp-demos--export-json-file
+    :around #'elisp-demos--symbols
+    :around #'elisp-demos--syntax-highlight
+    (let ((org-inhibit-startup t)
+          enable-dir-local-variables
+          org-mode-hook)
+      (apply fn args))))
 
 
 (use-package! buttercup

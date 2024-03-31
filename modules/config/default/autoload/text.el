@@ -27,17 +27,42 @@
   "Interactively select what text to insert from the kill ring."
   (interactive)
   (call-interactively
-   (cond ((fboundp 'counsel-yank-pop)    #'counsel-yank-pop)
+   (cond ((fboundp 'consult-yank-pop)    #'consult-yank-pop) ;HACK see @ymarco's comment on #5013 and TODO.org in the selecturm module.
+         ((fboundp 'counsel-yank-pop)    #'counsel-yank-pop)
          ((fboundp 'helm-show-kill-ring) #'helm-show-kill-ring)
-         ((error "No kill-ring search backend available. Enable ivy or helm!")))))
+         ((error "No kill-ring search backend available. Enable ivy, helm or vertico!")))))
 
 ;;;###autoload
-(defun +default/yank-buffer-filename ()
+(defun +default/yank-buffer-contents ()
+  "Copy entire buffer into kill ring."
+  (interactive)
+  (clipboard-kill-ring-save (point-min) (point-max)))
+
+;;;###autoload
+(defun +default/yank-buffer-path (&optional root)
   "Copy the current buffer's path to the kill ring."
   (interactive)
-  (if-let (filename (or buffer-file-name (bound-and-true-p list-buffers-directory)))
-      (message (kill-new (abbreviate-file-name filename)))
+  (if-let (filename (or (buffer-file-name (buffer-base-buffer))
+                        (bound-and-true-p list-buffers-directory)))
+      (let ((path (abbreviate-file-name
+                   (if root
+                       (file-relative-name filename root)
+                     filename))))
+        (kill-new path)
+        (if (string= path (car kill-ring))
+            (message "Copied path: %s" path)
+          (user-error "Couldn't copy filename in current buffer")))
     (error "Couldn't find filename in current buffer")))
+
+;;;###autoload
+(defun +default/yank-buffer-path-relative-to-project (&optional include-root)
+  "Copy the current buffer's path to the kill ring.
+With non-nil prefix INCLUDE-ROOT, also include the project's root."
+  (interactive "P")
+  (+default/yank-buffer-path
+   (if include-root
+       (file-name-directory (directory-file-name (doom-project-root)))
+     (doom-project-root))))
 
 ;;;###autoload
 (defun +default/insert-file-path (arg)
@@ -55,10 +80,12 @@ If `buffer-file-name' isn't set, uses `default-directory'."
   "Delete back to the previous column of whitespace, or as much whitespace as
 possible, or just one char if that's not possible."
   (interactive)
-  (let* ((context (ignore-errors (sp-get-thing)))
+  (let* ((context
+          (if (bound-and-true-p smartparens-mode)
+              (ignore-errors (sp-get-thing))))
          (op (plist-get context :op))
          (cl (plist-get context :cl))
-         open-len close-len)
+         open-len close-len current-column)
     (cond ;; When in strings (sp acts weird with quotes; this is the fix)
           ;; Also, skip closing delimiters
           ((and op cl
@@ -76,13 +103,9 @@ possible, or just one char if that's not possible."
                 (> tab-width 1)
                 (not (bolp))
                 (not (doom-point-in-string-p))
-                (save-excursion (>= (- (skip-chars-backward " \t")) tab-width)))
-           (let ((movement (% (current-column) tab-width)))
-             (when (= movement 0)
-               (setq movement tab-width))
-             (delete-char (- movement)))
-           (unless (memq (char-before) (list ?\n ?\ ))
-             (insert " ")))
+                (>= (abs (save-excursion (skip-chars-backward " \t")))
+                    (setq current-column (current-column))))
+           (delete-char (- (1+ (% (1- current-column) tab-width)))))
 
           ;; Otherwise do a regular delete
           ((delete-char -1)))))
@@ -122,7 +145,7 @@ possible, or just one char if that's not possible."
              (insert-char ?\s (- ocol (current-column)) nil))))
         ;;
         ((= n 1)
-         (cond ((or (not (featurep! +smartparens))
+         (cond ((or (not (modulep! +smartparens))
                     (not (bound-and-true-p smartparens-mode))
                     (and (memq (char-before) (list ?\  ?\t))
                          (save-excursion

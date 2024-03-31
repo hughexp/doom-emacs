@@ -1,6 +1,9 @@
 ;;; tools/lsp/+lsp.el -*- lexical-binding: t; -*-
 
-(defvar +lsp-company-backends 'company-capf
+(defvar +lsp-company-backends
+  (if (modulep! :editor snippets)
+      '(:separate company-capf company-yasnippet)
+    'company-capf)
   "The backends to prepend to `company-backends' in `lsp-mode' buffers.
 Can be a list of backends; accepts any value `company-backends' accepts.")
 
@@ -12,8 +15,8 @@ Can be a list of backends; accepts any value `company-backends' accepts.")
   :commands lsp-install-server
   :init
   ;; Don't touch ~/.emacs.d, which could be purged without warning
-  (setq lsp-session-file (concat doom-etc-dir "lsp-session")
-        lsp-server-install-dir (concat doom-etc-dir "lsp/"))
+  (setq lsp-session-file (concat doom-cache-dir "lsp-session")
+        lsp-server-install-dir (concat doom-data-dir "lsp"))
   ;; Don't auto-kill LSP server after last workspace buffer is killed, because I
   ;; will do it for you, after `+lsp-defer-shutdown' seconds.
   (setq lsp-keep-workspace-alive nil)
@@ -28,59 +31,70 @@ Can be a list of backends; accepts any value `company-backends' accepts.")
         lsp-enable-text-document-color nil)
   ;; Reduce unexpected modifications to code
   (setq lsp-enable-on-type-formatting nil)
+  ;; Make breadcrumbs opt-in; they're redundant with the modeline and imenu
+  (setq lsp-headerline-breadcrumb-enable nil)
+
+  ;; Explicitly tell lsp to use flymake; Lsp will default to flycheck if found
+  ;; even if its a dependency
+  (when (modulep! :checkers syntax +flymake)
+    (setq lsp-diagnostics-provider :flymake))
 
   ;; Let doom bind the lsp keymap.
-  (when (featurep! :config default +bindings)
+  (when (modulep! :config default +bindings)
     (setq lsp-keymap-prefix nil))
 
   :config
-  (pushnew! doom-debug-variables 'lsp-log-io 'lsp-print-performance)
+  (add-to-list 'doom-debug-variables 'lsp-log-io)
 
-  (setq lsp-intelephense-storage-path (concat doom-cache-dir "lsp-intelephense/")
-        lsp-vetur-global-snippets-dir (expand-file-name "vetur"
-                                                        (or (bound-and-true-p +snippets-dir)
-                                                            (concat doom-private-dir "snippets/")))
-        lsp-clients-emmy-lua-jar-path (concat lsp-server-install-dir "EmmyLua-LS-all.jar")
-        lsp-xml-jar-file              (concat lsp-server-install-dir "org.eclipse.lsp4xml-0.3.0-uber.jar")
-        lsp-groovy-server-file        (concat lsp-server-install-dir "groovy-language-server-all.jar"))
+  (setq lsp-intelephense-storage-path (concat doom-data-dir "lsp-intelephense/")
+        lsp-vetur-global-snippets-dir
+        (expand-file-name
+         "vetur" (or (bound-and-true-p +snippets-dir)
+                     (concat doom-user-dir "snippets/")))
+        lsp-xml-jar-file (expand-file-name "org.eclipse.lsp4xml-0.3.0-uber.jar" lsp-server-install-dir)
+        lsp-groovy-server-file (expand-file-name "groovy-language-server-all.jar" lsp-server-install-dir))
 
-  (set-popup-rule! "^\\*lsp-help" :size 0.35 :quit t :select t)
-  (set-lookup-handlers! 'lsp-mode :async t
-    :documentation #'lsp-describe-thing-at-point
-    :definition #'lsp-find-definition
-    :implementations #'lsp-find-implementation
-    :type-definition #'lsp-find-type-definition
-    :references #'lsp-find-references)
+  ;; REVIEW Remove this once this is fixed upstream.
+  (add-to-list 'lsp-client-packages 'lsp-racket)
 
-  (defadvice! +lsp--respect-user-defined-checkers-a (orig-fn &rest args)
+  (add-hook! 'doom-escape-hook
+    (defun +lsp-signature-stop-maybe-h ()
+      "Close the displayed `lsp-signature'."
+      (when lsp-signature-mode
+        (lsp-signature-stop)
+        t)))
+
+  (set-popup-rule! "^\\*lsp-\\(help\\|install\\)" :size 0.35 :quit t :select t)
+  (set-lookup-handlers! 'lsp-mode
+    :definition #'+lsp-lookup-definition-handler
+    :references #'+lsp-lookup-references-handler
+    :documentation '(lsp-describe-thing-at-point :async t)
+    :implementations '(lsp-find-implementation :async t)
+    :type-definition #'lsp-find-type-definition)
+
+
+  (defadvice! +lsp--respect-user-defined-checkers-a (fn &rest args)
     "Ensure user-defined `flycheck-checker' isn't overwritten by `lsp'."
     :around #'lsp-diagnostics-flycheck-enable
     (if flycheck-checker
         (let ((old-checker flycheck-checker))
-          (apply orig-fn args)
+          (apply fn args)
           (setq-local flycheck-checker old-checker))
-      (apply orig-fn args)))
+      (apply fn args)))
 
-  (add-hook! 'lsp-mode-hook
-    (defun +lsp-display-guessed-project-root-h ()
-      "Log what LSP things is the root of the current project."
-      ;; Makes it easier to detect root resolution issues.
-      (when-let (path (buffer-file-name (buffer-base-buffer)))
-        (if-let (root (lsp--calculate-root (lsp-session) path))
-            (lsp--info "Guessed project root is %s" (abbreviate-file-name root))
-          (lsp--info "Could not guess project root."))))
-    #'+lsp-optimization-mode)
+  (add-hook! 'lsp-mode-hook #'+lsp-optimization-mode)
 
-  (add-hook! 'lsp-completion-mode-hook
-    (defun +lsp-init-company-backends-h ()
-      (when lsp-completion-mode
-        (set (make-local-variable 'company-backends)
-             (cons +lsp-company-backends
-                   (remove +lsp-company-backends
-                           (remq 'company-capf company-backends)))))))
+  (when (modulep! :completion company)
+    (add-hook! 'lsp-completion-mode-hook
+      (defun +lsp-init-company-backends-h ()
+        (when lsp-completion-mode
+          (set (make-local-variable 'company-backends)
+               (cons +lsp-company-backends
+                     (remove +lsp-company-backends
+                             (remq 'company-capf company-backends))))))))
 
   (defvar +lsp--deferred-shutdown-timer nil)
-  (defadvice! +lsp-defer-server-shutdown-a (orig-fn &optional restart)
+  (defadvice! +lsp-defer-server-shutdown-a (fn &optional restart)
     "Defer server shutdown for a few seconds.
 This gives the user a chance to open other project files before the server is
 auto-killed (which is a potentially expensive process). It also prevents the
@@ -90,7 +104,7 @@ server getting expensively restarted when reverting buffers."
             restart
             (null +lsp-defer-shutdown)
             (= +lsp-defer-shutdown 0))
-        (prog1 (funcall orig-fn restart)
+        (prog1 (funcall fn restart)
           (+lsp-optimization-mode -1))
       (when (timerp +lsp--deferred-shutdown-timer)
         (cancel-timer +lsp--deferred-shutdown-timer))
@@ -101,45 +115,87 @@ server getting expensively restarted when reverting buffers."
                    (with-lsp-workspace workspace
                      (unless (lsp--workspace-buffers workspace)
                        (let ((lsp-restart 'ignore))
-                         (funcall orig-fn))
+                         (funcall fn))
                        (+lsp-optimization-mode -1))))
-             lsp--cur-workspace)))))
+             lsp--cur-workspace))))
 
+  (when (modulep! :ui modeline +light)
+    (defvar-local lsp-modeline-icon nil)
+
+    (add-hook! '(lsp-before-initialize-hook
+                 lsp-after-initialize-hook
+                 lsp-after-uninitialized-functions
+                 lsp-before-open-hook
+                 lsp-after-open-hook)
+      (defun +lsp-update-modeline (&rest _)
+        "Update modeline with lsp state."
+        (let* ((workspaces (lsp-workspaces))
+               (face (if workspaces 'success 'warning))
+               (label (if workspaces "LSP Connected" "LSP Disconnected")))
+          (setq lsp-modeline-icon (concat
+                                   " "
+                                   (+modeline-format-icon 'faicon "nf-fa-rocket" "" face label -0.0575)
+                                   " "))
+          (add-to-list 'global-mode-string
+                       '(t (:eval lsp-modeline-icon))
+                       'append)))))
+
+  (when (modulep! :completion corfu)
+    (setq lsp-completion-provider :none)
+    (add-hook 'lsp-mode-hook #'lsp-completion-mode)))
 
 (use-package! lsp-ui
-  :defer t
+  :hook (lsp-mode . lsp-ui-mode)
+  :init
+  (defadvice! +lsp--use-hook-instead-a (fn &rest args)
+    "Change `lsp--auto-configure' to not force `lsp-ui-mode' on us. Using a hook
+instead is more sensible."
+    :around #'lsp--auto-configure
+    (letf! ((#'lsp-ui-mode #'ignore))
+      (apply fn args)))
+
   :config
-  (setq lsp-ui-doc-max-height 8
-        lsp-ui-doc-max-width 35
-        lsp-ui-sideline-ignore-duplicate t
-        ;; lsp-ui-doc is redundant with and more invasive than
-        ;; `+lookup/documentation'
-        lsp-ui-doc-enable nil
+  (when (modulep! +peek)
+    (set-lookup-handlers! 'lsp-ui-mode
+      :definition 'lsp-ui-peek-find-definitions
+      :implementations 'lsp-ui-peek-find-implementation
+      :references 'lsp-ui-peek-find-references
+      :async t))
+
+  (setq lsp-ui-peek-enable (modulep! +peek)
+        lsp-ui-doc-max-height 8
+        lsp-ui-doc-max-width 72         ; 150 (default) is too wide
+        lsp-ui-doc-delay 0.75           ; 0.2 (default) is too naggy
         lsp-ui-doc-show-with-mouse nil  ; don't disappear on mouseover
         lsp-ui-doc-position 'at-point
+        lsp-ui-sideline-ignore-duplicate t
         ;; Don't show symbol definitions in the sideline. They are pretty noisy,
         ;; and there is a bug preventing Flycheck errors from being shown (the
         ;; errors flash briefly and then disappear).
-        lsp-ui-sideline-show-hover nil)
+        lsp-ui-sideline-show-hover nil
+        ;; Re-enable icon scaling (it's disabled by default upstream for Emacs
+        ;; 26.x compatibility; see emacs-lsp/lsp-ui#573)
+        lsp-ui-sideline-actions-icon lsp-ui-sideline-actions-icon-default)
 
   (map! :map lsp-ui-peek-mode-map
         "j"   #'lsp-ui-peek--select-next
         "k"   #'lsp-ui-peek--select-prev
         "C-k" #'lsp-ui-peek--select-prev-file
-        "C-j" #'lsp-ui-peek--select-next-file)
-
-  (when (featurep! +peek)
-    (set-lookup-handlers! 'lsp-ui-mode :async t
-      :definition 'lsp-ui-peek-find-definitions
-      :implementations 'lsp-ui-peek-find-implementation
-      :references 'lsp-ui-peek-find-references)))
+        "C-j" #'lsp-ui-peek--select-next-file))
 
 
 (use-package! helm-lsp
-  :when (featurep! :completion helm)
+  :when (modulep! :completion helm)
   :commands helm-lsp-workspace-symbol helm-lsp-global-workspace-symbol)
 
 
 (use-package! lsp-ivy
-  :when (featurep! :completion ivy)
+  :when (modulep! :completion ivy)
   :commands lsp-ivy-workspace-symbol lsp-ivy-global-workspace-symbol)
+
+
+(use-package! consult-lsp
+  :defer t
+  :when (modulep! :completion vertico)
+  :init
+  (map! :map lsp-mode-map [remap xref-find-apropos] #'consult-lsp-symbols))

@@ -26,35 +26,39 @@ This must be set before `treemacs' has loaded.")
         treemacs-persist-file (concat doom-cache-dir "treemacs-persist")
         treemacs-last-error-persist-file (concat doom-cache-dir "treemacs-last-error-persist"))
   :config
-  ;; Allow ace-window to target treemacs windows elsewhere
-  (after! ace-window
-    (delq! 'treemacs-mode aw-ignored-buffers))
-  ;; ...but not from treemacs-visit-node-ace-* commands.
-  (defadvice! +treemacs--ace-window-ignore-treemacs-buffer-a (orig-fn &rest args)
-    :around '(treemacs-visit-node-ace
-              treemacs-visit-node-ace-horizontal-split
-              treemacs-visit-node-ace-vertical-split)
-    (let ((aw-ignored-buffers (cons 'treemacs-mode aw-ignored-buffers)))
-      (apply orig-fn args)))
-
-  ;; Don't follow the cursor
+  ;; Don't follow the cursor (it's more disruptive/jarring than helpful as a default)
   (treemacs-follow-mode -1)
 
+  (set-popup-rule! "^ ?\\*Treemacs" :ignore t)
   (when +treemacs-git-mode
     ;; If they aren't supported, fall back to simpler methods
     (when (and (memq +treemacs-git-mode '(deferred extended))
+               (not treemacs-python-executable)
                (not (executable-find "python3")))
       (setq +treemacs-git-mode 'simple))
     (treemacs-git-mode +treemacs-git-mode)
     (setq treemacs-collapse-dirs
-          (if (memq treemacs-git-mode '(extended deferred))
+          (if (memq +treemacs-git-mode '(extended deferred))
               3
             0))))
 
 
+(use-package! treemacs-nerd-icons
+  :defer t
+  ;; HACK: Because `lsp-treemacs' mutates Treemacs' default theme, and
+  ;;   `treemacs-nerd-icons' reads from it to populate its nerd-icons theme,
+  ;;   load order is important to ensure they don't step on each other's toes.
+  :init (with-eval-after-load (if (modulep! +lsp) 'lsp-treemacs 'treemacs)
+          (require 'treemacs-nerd-icons))
+  :config (treemacs-load-theme "nerd-icons"))
+
+
 (use-package! treemacs-evil
-  :when (featurep! :editor evil +everywhere)
-  :after treemacs
+  :when (modulep! :editor evil +everywhere)
+  :defer t
+  :init
+  (after! treemacs (require 'treemacs-evil))
+  (add-to-list 'doom-evil-state-alist '(?T . treemacs))
   :config
   (define-key! evil-treemacs-state-map
     [return] #'treemacs-RET-action
@@ -71,11 +75,16 @@ This must be set before `treemacs' has loaded.")
 
 
 (use-package! treemacs-magit
-  :when (featurep! :tools magit)
+  :when (modulep! :tools magit)
   :after treemacs magit)
 
 
 (use-package! treemacs-persp
-  :when (featurep! :ui workspaces)
+  :when (modulep! :ui workspaces)
   :after treemacs
   :config (treemacs-set-scope-type 'Perspectives))
+
+
+(use-package! lsp-treemacs
+  :when (modulep! +lsp)
+  :after treemacs)

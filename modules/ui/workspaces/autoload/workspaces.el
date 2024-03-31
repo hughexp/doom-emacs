@@ -1,4 +1,4 @@
-;;; feature/workspaces/autoload/workspaces.el -*- lexical-binding: t; -*-
+;;; ui/workspaces/autoload/workspaces.el -*- lexical-binding: t; -*-
 
 (defvar +workspace--last nil)
 (defvar +workspace--index 0)
@@ -221,7 +221,7 @@ workspace."
 ;;;###autoload
 (defun +workspace/rename (new-name)
   "Rename the current workspace."
-  (interactive (list (read-from-minibuffer "New workspace name: ")))
+  (interactive (list (completing-read "New workspace name: " (list (+workspace-current-name)))))
   (condition-case-unless-debug ex
       (let* ((current-name (+workspace-current-name))
              (old-name (+workspace-rename current-name new-name)))
@@ -307,17 +307,18 @@ workspace, otherwise the new workspace is blank."
     ((debug error) (+workspace-error (cadr e) t))))
 
 ;;;###autoload
+(defun +workspace/new-named (name)
+  "Create a new workspace with a given NAME."
+  (interactive "sWorkspace Name: ")
+  (+workspace/new name))
+
+;;;###autoload
 (defun +workspace/switch-to (index)
   "Switch to a workspace at a given INDEX. A negative number will start from the
 end of the workspace list."
   (interactive
    (list (or current-prefix-arg
-             (if (featurep! :completion ivy)
-                 (ivy-read "Switch to workspace: "
-                           (+workspace-list-names)
-                           :caller #'+workspace/switch-to
-                           :preselect (+workspace-current-name))
-               (completing-read "Switch to workspace: " (+workspace-list-names))))))
+             (completing-read "Switch to workspace: " (+workspace-list-names)))))
   (when (and (stringp index)
              (string-match-p "^[0-9]+$" index))
     (setq index (string-to-number index)))
@@ -484,7 +485,7 @@ the next."
   "Delete workspace associated with current frame.
 A workspace gets associated with a frame when a new frame is interactively
 created."
-  (when persp-mode
+  (when (and persp-mode (not (bound-and-true-p with-editor-mode)))
     (unless frame
       (setq frame (selected-frame)))
     (let ((frame-persp (frame-parameter frame 'workspace)))
@@ -566,13 +567,42 @@ This be hooked to `projectile-after-switch-project-hook'."
         (run-hooks 'projectile-after-switch-project-hook)
         (setq +workspaces--project-dir nil)))))
 
+;;;###autoload
+(defun +workspaces-save-tab-bar-data-h (_)
+  "Save the current workspace's tab bar data."
+  (when (get-current-persp)
+    (set-persp-parameter
+     'tab-bar-tabs (tab-bar-tabs))
+    (set-persp-parameter 'tab-bar-closed-tabs tab-bar-closed-tabs)))
+
+;;;###autoload
+(defun +workspaces-save-tab-bar-data-to-file-h (&rest _)
+  "Save the current workspace's tab bar data to file."
+  (when (get-current-persp)
+    ;; HACK: Remove fields (for window-configuration) that cannot be serialized.
+    (set-persp-parameter 'tab-bar-tabs
+                         (frameset-filter-tabs (tab-bar-tabs) nil nil t))))
+
+;;;###autoload
+(defun +workspaces-load-tab-bar-data-h (_)
+  "Restores the tab bar data of the workspace we have just switched to."
+  (tab-bar-tabs-set (persp-parameter 'tab-bar-tabs))
+  (setq tab-bar-closed-tabs (persp-parameter 'tab-bar-closed-tabs))
+  (tab-bar--update-tab-bar-lines t))
+
+;;;###autoload
+(defun +workspaces-load-tab-bar-data-from-file-h (&rest _)
+  "Restores the tab bar data from file."
+  (when-let ((persp-tab-data (persp-parameter 'tab-bar-tabs)))
+    (tab-bar-tabs-set persp-tab-data)
+    (tab-bar--update-tab-bar-lines t)))
 
 ;;
 ;;; Advice
 
 ;;;###autoload
-(defun +workspaces-autosave-real-buffers-a (orig-fn &rest args)
+(defun +workspaces-autosave-real-buffers-a (fn &rest args)
   "Don't autosave if no real buffers are open."
   (when (doom-real-buffer-list)
-    (apply orig-fn args))
+    (apply fn args))
   t)

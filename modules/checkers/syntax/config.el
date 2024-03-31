@@ -4,15 +4,16 @@
 ;;; Flycheck
 
 (use-package! flycheck
+  :unless (modulep! +flymake)
   :commands flycheck-list-errors flycheck-buffer
   :hook (doom-first-buffer . global-flycheck-mode)
   :config
   (setq flycheck-emacs-lisp-load-path 'inherit)
 
-  ;; Check only when saving or opening files. Newline & idle checks are a mote
-  ;; excessive and can catch code in an incomplete state, producing false
-  ;; positives, so we removed them.
-  (setq flycheck-check-syntax-automatically '(save mode-enabled idle-buffer-switch))
+  ;; Rerunning checks on every newline is a mote excessive.
+  (delq 'new-line flycheck-check-syntax-automatically)
+  ;; And don't recheck on idle as often
+  (setq flycheck-idle-change-delay 1.0)
 
   ;; For the above functionality, check syntax in a buffer that you switched to
   ;; only briefly. This allows "refreshing" the syntax check state for several
@@ -24,7 +25,9 @@
 
   ;; Don't commandeer input focus if the error message pops up (happens when
   ;; tooltips and childframes are disabled).
-  (set-popup-rule! "^\\*Flycheck error messages\\*" :select nil)
+  (set-popup-rules!
+    '(("^\\*Flycheck error messages\\*" :select nil)
+      ("^\\*Flycheck errors\\*" :size 0.25)))
 
   (add-hook! 'doom-escape-hook :append
     (defun +syntax-check-buffer-h ()
@@ -43,6 +46,7 @@
 
 
 (use-package! flycheck-popup-tip
+  :unless (modulep! +flymake)
   :commands flycheck-popup-tip-show-popup flycheck-popup-tip-delete-popup
   :hook (flycheck-mode . +syntax-init-popups-h)
   :config
@@ -60,7 +64,8 @@
 
 
 (use-package! flycheck-posframe
-  :when (featurep! +childframe)
+  :when (modulep! +childframe)
+  :unless (modulep! +flymake)
   :hook (flycheck-mode . +syntax-init-popups-h)
   :config
   (setq flycheck-posframe-warning-prefix "! "
@@ -78,4 +83,21 @@
 
 
 ;;
-;;; TODO Flymake
+;;; Flymake
+(use-package! flymake
+  :when (modulep! +flymake)
+  :defer t
+  :init
+  ;; as flymakes fail silently there is no need to activate it on a per major mode basis
+  (add-hook! (prog-mode text-mode) #'flymake-mode)
+  :config
+  (setq flymake-fringe-indicator-position 'right-fringe))
+
+
+(use-package! flymake-popon
+  :when (modulep! +flymake)
+  :hook (flymake-mode . flymake-popon-mode)
+  :config
+  (setq flymake-popon-method (if (modulep! +childframe)
+                                 'posframe
+                               'popon)))

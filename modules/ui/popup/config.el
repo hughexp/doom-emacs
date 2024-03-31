@@ -41,7 +41,7 @@ adjustment.")
 
 (defvar +popup-buffer-mode-map
   (let ((map (make-sparse-keymap)))
-    (when (featurep! :editor evil)
+    (when (modulep! :editor evil)
       ;; For maximum escape coverage in emacs state buffers; this only works in
       ;; GUI Emacs, in tty Emacs use C-g instead
       (define-key map [escape] #'doom/escape))
@@ -127,10 +127,10 @@ prevent the popup(s) from messing up the UI (or vice versa)."
 ;; Default popup rules & bootstrap
 
 (set-popup-rules!
-  (when (featurep! +all)
+  (when (modulep! +all)
     '(("^\\*"  :slot 1 :vslot -1 :select t)
       ("^ \\*" :slot 1 :vslot -1 :size +popup-shrink-to-fit)))
-  (when (featurep! +defaults)
+  (when (modulep! +defaults)
     '(("^\\*Completions" :ignore t)
       ("^\\*Local variables\\*$"
        :vslot -1 :slot 1 :size +popup-shrink-to-fit)
@@ -151,10 +151,12 @@ prevent the popup(s) from messing up the UI (or vice versa)."
       ("^ \\*undo-tree\\*"
        :slot 2 :side left :size 20 :select t :quit t)
       ;; `help-mode', `helpful-mode'
-      ("^\\*[Hh]elp"
-       :slot 2 :vslot -8 :size 0.35 :select t)
+      ("^\\*\\([Hh]elp\\|Apropos\\)"
+       :slot 2 :vslot -8 :size 0.42 :select t)
       ("^\\*eww\\*"  ; `eww' (and used by dash docsets)
        :vslot -11 :size 0.35 :select t)
+      ("^\\*xwidget"
+       :vslot -11 :size 0.35 :select nil)
       ("^\\*info\\*$"  ; `Info-mode'
        :slot 2 :vslot 2 :size 0.45 :select t)))
   '(("^\\*Warnings" :vslot 99 :size 0.25)
@@ -162,7 +164,7 @@ prevent the popup(s) from messing up the UI (or vice versa)."
     ("^\\*CPU-Profiler-Report "    :side bottom :vslot 100 :slot 1 :height 0.4 :width 0.5 :quit nil)
     ("^\\*Memory-Profiler-Report " :side bottom :vslot 100 :slot 2 :height 0.4 :width 0.5 :quit nil)
     ("^\\*Process List\\*" :side bottom :vslot 101 :size 0.25 :select t :quit t)
-    ("^\\*\\(?:Proced\\|timer-list\\|Abbrevs\\|Output\\|Occur\\|unsent mail\\)\\*" :ignore t)))
+    ("^\\*\\(?:Proced\\|timer-list\\|Abbrevs\\|Output\\|Occur\\|unsent mail.*?\\|message\\)\\*" :ignore t)))
 
 (add-hook 'doom-init-ui-hook #'+popup-mode 'append)
 
@@ -174,6 +176,6 @@ prevent the popup(s) from messing up the UI (or vice versa)."
 
 
 ;;
-;; Hacks
+;;; Hacks
 
 (load! "+hacks")

@@ -1,8 +1,26 @@
 ;;; app/rss/autoload.el -*- lexical-binding: t; -*-
 
+(defvar +rss--wconf nil)
+
 ;;;###autoload
-(defalias '=rss #'elfeed
-  "Activate (or switch to) `elfeed' in its workspace.")
+(defun =rss ()
+  "Activate (or switch to) `elfeed' in its workspace."
+  (interactive)
+  (if (modulep! :ui workspaces)
+      (progn
+        (+workspace-switch +rss-workspace-name t)
+        (unless (memq (buffer-local-value 'major-mode
+                                          (window-buffer
+                                           (selected-window)))
+                      '(elfeed-show-mode
+                        elfeed-search-mode))
+          (doom/switch-to-scratch-buffer)
+          (elfeed))
+        (+workspace/display))
+    (setq +rss--wconf (current-window-configuration))
+    (delete-other-windows)
+    (switch-to-buffer (doom-fallback-buffer))
+    (elfeed)))
 
 ;;;###autoload
 (defun +rss/delete-pane ()
@@ -41,7 +59,14 @@
     (forward-line -1)
     (call-interactively '+rss/open)))
 
-
+;;;###autoload
+(defun +rss/copy-link ()
+  "Copy current link to clipboard."
+  (interactive)
+  (let ((link (elfeed-entry-link elfeed-show-entry)))
+    (when link
+      (kill-new link)
+      (message "Copied %s to clipboard" link))))
 ;;
 ;; Hooks
 
@@ -56,14 +81,18 @@
     (setq-local shr-width 85)
     (set-buffer-modified-p nil)))
 
+(defun +rss--cleanup-on-kill-h ()
+  "Run `elfeed-db-compact'. See `+rss-cleanup-h'."
+  ;; `delete-file-projectile-remove-from-cache' slows down `elfeed-db-compact'
+  ;; tremendously, so we disable the projectile cache:
+  (let (projectile-enable-caching)
+    (elfeed-db-compact)))
+
 ;;;###autoload
 (defun +rss-cleanup-h ()
   "Clean up after an elfeed session. Kills all elfeed and elfeed-org files."
   (interactive)
-  ;; `delete-file-projectile-remove-from-cache' slows down `elfeed-db-compact'
-  ;; tremendously, so we disable the projectile cache:
-  (let (projectile-enable-caching)
-    (elfeed-db-compact))
+  (add-hook 'kill-emacs-hook #'+rss--cleanup-on-kill-h)
   (let ((buf (previous-buffer)))
     (when (or (null buf) (not (doom-real-buffer-p buf)))
       (switch-to-buffer (doom-fallback-buffer))))
@@ -77,7 +106,14 @@
       (with-current-buffer b
         (remove-hook 'kill-buffer-hook #'+rss-cleanup-h :local)
         (kill-buffer b)))
-    (mapc #'kill-buffer show-buffers)))
+    (mapc #'kill-buffer show-buffers))
+  (if (and (modulep! :ui workspaces)
+           (+workspace-exists-p +rss-workspace-name))
+      (+workspace/delete +rss-workspace-name)
+    (when (window-configuration-p +rss--wconf)
+      (set-window-configuration +rss--wconf))
+    (setq +rss--wconf nil)
+    (previous-buffer)))
 
 
 ;;

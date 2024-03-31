@@ -1,6 +1,9 @@
 ;; -*- no-byte-compile: t; -*-
 ;;; lang/solidity/packages.el
 
-(package! solidity-mode :pin "d166a86b83907e0cfd64c191e9dfce4b44a9843e")
-(package! company-solidity)
-(package! solidity-flycheck)
+(package! solidity-mode :pin "8ba549e429e86778a0e079648f3bc3463fcb15f6")
+(when (modulep! :completion company)
+  (package! company-solidity))
+(when (and (modulep! :checkers syntax)
+           (not (modulep! :checkers syntax +flymake)))
+  (package! solidity-flycheck))

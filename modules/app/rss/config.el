@@ -11,9 +11,12 @@
   "Automatically slice images shown in elfeed-show-mode buffers, making them
 easier to scroll through.")
 
+(defvar +rss-workspace-name "*rss*"
+  "Name of the workspace that contains the elfeed buffer.")
+
 
 ;;
-;; Packages
+;;; Packages
 
 (use-package! elfeed
   :commands elfeed
@@ -54,21 +57,35 @@ easier to scroll through.")
     (define-key! elfeed-show-mode-map
       [remap next-buffer]     #'+rss/next
       [remap previous-buffer] #'+rss/previous))
-  (when (featurep! :editor evil +everywhere)
+  (when (modulep! :editor evil +everywhere)
     (evil-define-key 'normal elfeed-search-mode-map
       "q" #'elfeed-kill-buffer
       "r" #'elfeed-search-update--force
-      (kbd "M-RET") #'elfeed-search-browse-url)))
+      (kbd "M-RET") #'elfeed-search-browse-url)
+    (map! :map elfeed-show-mode-map
+          :n "gc" nil
+          :n "gc" #'+rss/copy-link)))
+
 
 
 (use-package! elfeed-org
-  :when (featurep! +org)
+  :when (modulep! +org)
   :after elfeed
   :preface
   (setq rmh-elfeed-org-files (list "elfeed.org"))
   :config
-  (and (let ((default-directory org-directory))
-         (setq rmh-elfeed-org-files
-               (cl-remove-if-not
-                #'file-exists-p (mapcar #'expand-file-name rmh-elfeed-org-files))))
-       (elfeed-org)))
+  (elfeed-org)
+  (defadvice! +rss-skip-missing-org-files-a (&rest _)
+    :before '(elfeed rmh-elfeed-org-mark-feed-ignore elfeed-org-export-opml)
+    (unless (file-name-absolute-p (car rmh-elfeed-org-files))
+      (let* ((default-directory org-directory)
+             (files (mapcar #'expand-file-name rmh-elfeed-org-files)))
+        (dolist (file (cl-remove-if #'file-exists-p files))
+          (message "elfeed-org: ignoring %S because it can't be read" file))
+        (setq rmh-elfeed-org-files (cl-remove-if-not #'file-exists-p files))))))
+
+
+(use-package! elfeed-goodies
+  :after elfeed
+  :config
+  (elfeed-goodies/setup))

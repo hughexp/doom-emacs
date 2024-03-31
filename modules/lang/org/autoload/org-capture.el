@@ -15,9 +15,12 @@
     (width . 70)
     (height . 25)
     (transient . t)
-    ,(when (and IS-LINUX (not (getenv "DISPLAY")))
-       `(display . ":0"))
-    ,(if IS-MAC '(menu-bar-lines . 1)))
+    ,@(when (featurep :system 'linux)
+        `((window-system . ,(if (boundp 'pgtk-initialized) 'pgtk 'x))
+          (display . ,(or (getenv "WAYLAND_DISPLAY")
+                          (getenv "DISPLAY")
+                          ":0"))))
+    ,(if (featurep :system 'macos) '(menu-bar-lines . 1)))
   "TODO")
 
 ;;;###autoload
@@ -81,7 +84,7 @@ If it is an absolute path return `+org-capture-todo-file' verbatim."
 ;;;###autoload
 (defun +org-capture-notes-file ()
   "Expand `+org-capture-notes-file' from `org-directory'.
-If it is an absolute path return `+org-capture-todo-file' verbatim."
+If it is an absolute path return `+org-capture-notes-file' verbatim."
   (expand-file-name +org-capture-notes-file org-directory))
 
 (defun +org--capture-local-root (path)

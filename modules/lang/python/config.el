@@ -7,7 +7,7 @@
   "Command to initialize the jupyter REPL for `+python/open-jupyter-repl'.")
 
 (after! projectile
-  (pushnew! projectile-project-root-files "setup.py" "requirements.txt"))
+  (pushnew! projectile-project-root-files "pyproject.toml" "requirements.txt" "setup.py"))
 
 
 ;;
@@ -20,14 +20,20 @@
   (setq python-environment-directory doom-cache-dir
         python-indent-guess-indent-offset-verbose nil)
 
-  (when (featurep! +lsp)
-    (add-hook 'python-mode-local-vars-hook #'lsp!)
+  (when (modulep! +lsp)
+    (add-hook 'python-mode-local-vars-hook #'lsp! 'append)
     ;; Use "mspyls" in eglot if in PATH
     (when (executable-find "Microsoft.Python.LanguageServer")
       (set-eglot-client! 'python-mode '("Microsoft.Python.LanguageServer"))))
+
+  (when (modulep! +tree-sitter)
+    (add-hook 'python-mode-local-vars-hook #'tree-sitter! 'append))
   :config
-  (set-repl-handler! 'python-mode #'+python/open-repl :persist t)
-  (set-docsets! 'python-mode "Python 3" "NumPy" "SciPy")
+  (set-repl-handler! 'python-mode #'+python/open-repl
+    :persist t
+    :send-region #'python-shell-send-region
+    :send-buffer #'python-shell-send-buffer)
+  (set-docsets! '(python-mode inferior-python-mode) "Python 3" "NumPy" "SciPy" "Pandas")
 
   (set-ligatures! 'python-mode
     ;; Functional
@@ -51,7 +57,7 @@
   (setq python-indent-guess-indent-offset-verbose nil)
 
   ;; Default to Python 3. Prefer the versioned Python binaries since some
-  ;; systems stupidly make the unversioned one point at Python 2.
+  ;; systems link the unversioned one to Python 2.
   (when (and (executable-find "python3")
              (string= python-shell-interpreter "python"))
     (setq python-shell-interpreter "python3"))
@@ -75,14 +81,8 @@
         (setq-local flycheck-python-pylint-executable "pylint")
         (setq-local flycheck-python-flake8-executable "flake8"))))
 
-  (define-key python-mode-map (kbd "DEL") nil) ; interferes with smartparens
-  (sp-local-pair 'python-mode "'" nil
-                 :unless '(sp-point-before-word-p
-                           sp-point-after-word-p
-                           sp-point-before-same-p))
-
   ;; Affects pyenv and conda
-  (when (featurep! :ui modeline)
+  (when (modulep! :ui modeline)
     (advice-add #'pythonic-activate :after-while #'+modeline-update-env-in-all-windows-h)
     (advice-add #'pythonic-deactivate :after #'+modeline-clear-env-in-all-windows-h))
 
@@ -92,7 +92,7 @@
 (use-package! anaconda-mode
   :defer t
   :init
-  (setq anaconda-mode-installation-directory (concat doom-etc-dir "anaconda/")
+  (setq anaconda-mode-installation-directory (concat doom-data-dir "anaconda/")
         anaconda-mode-eldoc-as-single-line t)
 
   (add-hook! 'python-mode-local-vars-hook :append
@@ -102,7 +102,7 @@
       (unless (or (bound-and-true-p lsp-mode)
                   (bound-and-true-p eglot--managed-mode)
                   (bound-and-true-p lsp--buffer-deferred)
-                  (not (executable-find python-shell-interpreter)))
+                  (not (executable-find python-shell-interpreter t)))
         (anaconda-mode +1))))
   :config
   (set-company-backend! 'anaconda-mode '(company-anaconda))
@@ -144,7 +144,7 @@
         :localleader
         (:prefix ("i" . "imports")
           :desc "Insert missing imports" "i" #'pyimport-insert-missing
-          :desc "Remove unused imports"  "r" #'pyimport-remove-unused
+          :desc "Remove unused imports"  "R" #'pyimport-remove-unused
           :desc "Optimize imports"       "o" #'+python/optimize-imports)))
 
 
@@ -187,6 +187,7 @@
         :localleader
         :map python-mode-map
         :prefix ("t" . "test")
+        "a" #'python-pytest
         "f" #'python-pytest-file-dwim
         "F" #'python-pytest-file
         "t" #'python-pytest-function-dwim
@@ -206,7 +207,7 @@
   (set-eval-handler! 'python-mode
     '((:command . (lambda () python-shell-interpreter))
       (:exec (lambda ()
-               (if-let* ((bin (executable-find "pipenv"))
+               (if-let* ((bin (executable-find "pipenv" t))
                          (_ (pipenv-project-p)))
                    (format "PIPENV_MAX_DEPTH=9999 %s run %%c %%o %%s %%a" bin)
                  "%c %o %s %a")))
@@ -227,7 +228,7 @@
 (use-package! pyvenv
   :after python
   :init
-  (when (featurep! :ui modeline)
+  (when (modulep! :ui modeline)
     (add-hook 'pyvenv-post-activate-hooks #'+modeline-update-env-in-all-windows-h)
     (add-hook 'pyvenv-pre-deactivate-hooks #'+modeline-clear-env-in-all-windows-h))
   :config
@@ -239,18 +240,18 @@
 
 
 (use-package! pyenv-mode
-  :when (featurep! +pyenv)
+  :when (modulep! +pyenv)
   :after python
   :config
-  (pyenv-mode +1)
   (when (executable-find "pyenv")
+    (pyenv-mode +1)
     (add-to-list 'exec-path (expand-file-name "shims" (or (getenv "PYENV_ROOT") "~/.pyenv"))))
   (add-hook 'python-mode-local-vars-hook #'+python-pyenv-mode-set-auto-h)
   (add-hook 'doom-switch-buffer-hook #'+python-pyenv-mode-set-auto-h))
 
 
 (use-package! conda
-  :when (featurep! +conda)
+  :when (modulep! +conda)
   :after python
   :config
   ;; The location of your anaconda home will be guessed from a list of common
@@ -264,13 +265,16 @@
                                 "~/.anaconda"
                                 "~/.miniconda"
                                 "~/.miniconda3"
+                                "~/.miniforge3"
                                 "~/anaconda3"
                                 "~/miniconda3"
+                                "~/miniforge3"
                                 "~/opt/miniconda3"
                                 "/usr/bin/anaconda3"
                                 "/usr/local/anaconda3"
                                 "/usr/local/miniconda3"
-                                "/usr/local/Caskroom/miniconda/base")
+                                "/usr/local/Caskroom/miniconda/base"
+                                "~/.conda")
                if (file-directory-p dir)
                return (setq conda-anaconda-home (expand-file-name dir)
                             conda-env-home-directory (expand-file-name dir)))
@@ -286,12 +290,15 @@
 
 
 (use-package! poetry
-  :when (featurep! +poetry)
-  :after python)
+  :when (modulep! +poetry)
+  :after python
+  :init
+  (setq poetry-tracking-strategy 'switch-buffer)
+  (add-hook 'python-mode-hook #'poetry-tracking-mode))
 
 
 (use-package! cython-mode
-  :when (featurep! +cython)
+  :when (modulep! +cython)
   :mode "\\.p\\(yx\\|x[di]\\)\\'"
   :config
   (setq cython-default-compile-format "cython -a %s")
@@ -302,24 +309,43 @@
 
 
 (use-package! flycheck-cython
-  :when (featurep! +cython)
-  :when (featurep! :checkers syntax)
+  :when (modulep! +cython)
+  :when (and (modulep! :checkers syntax)
+             (not (modulep! :checkers syntax +flymake)))
   :after cython-mode)
+
+
+(use-package! pip-requirements
+  :defer t
+  :config
+  ;; HACK `pip-requirements-mode' performs a sudden HTTP request to
+  ;;   https://pypi.org/simple, which causes unexpected hangs (see #5998). This
+  ;;   advice defers this behavior until the first time completion is invoked.
+  ;; REVIEW More sensible behavior should be PRed upstream.
+  (defadvice! +python--init-completion-a (&rest args)
+    "Call `pip-requirements-fetch-packages' first time completion is invoked."
+    :before #'pip-requirements-complete-at-point
+    (unless pip-packages (pip-requirements-fetch-packages)))
+  (defadvice! +python--inhibit-pip-requirements-fetch-packages-a (fn &rest args)
+    "No-op `pip-requirements-fetch-packages', which can be expensive."
+    :around #'pip-requirements-mode
+    (letf! ((#'pip-requirements-fetch-packages #'ignore))
+      (apply fn args))))
 
 
 ;;
 ;;; LSP
 
-(eval-when! (and (featurep! +lsp)
-                 (not (featurep! :tools lsp +eglot)))
+(eval-when! (and (modulep! +lsp)
+                 (not (modulep! :tools lsp +eglot)))
 
   (use-package! lsp-python-ms
-    :unless (featurep! +pyright)
+    :unless (modulep! +pyright)
     :after lsp-mode
     :preface
     (after! python
       (setq lsp-python-ms-python-executable-cmd python-shell-interpreter)))
 
   (use-package! lsp-pyright
-    :when (featurep! +pyright)
+    :when (modulep! +pyright)
     :after lsp-mode))

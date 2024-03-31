@@ -1,7 +1,9 @@
 ;; -*- no-byte-compile: t; -*-
 ;;; emacs/undo/packages.el
 
-(if (featurep! +tree)
-    (package! undo-tree :pin "7523823ca3709e0327f3e9f38ddfec71a58084be")
-  (package! undo-fu :pin "c0806c1903c5a0e4c69b6615cdc3366470a9b8ca")
-  (package! undo-fu-session :pin "56cdd3538a058c6916bdf2d9010c2179f2505829"))
+(if (modulep! +tree)
+    (package! undo-tree :pin "f9e7eac16f674aa7ed8fa065401d26c0258a84f8")
+  (package! undo-fu :pin "04961ba775142627c5fa4bb94c3e507afedaecd1")
+  (package! undo-fu-session :pin "2b355c9d39b2688f859a762f2289f23fd16fadc4")
+  (when (> emacs-major-version 27)  ; unsupported in 27
+    (package! vundo :pin "10d011fb05a9db0cc2f641e5b5bebe4b5fb81b6f")))

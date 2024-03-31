@@ -21,7 +21,8 @@ the buffer is visible, then set another timer and try again later."
                (let ((kill-buffer-hook (remq '+popup-kill-buffer-hook-h kill-buffer-hook))
                      confirm-kill-processes)
                  (when-let (process (get-buffer-process buffer))
-                   (kill-process process))
+                   (when (eq (process-type process) 'real)
+                     (kill-process process)))
                  (let (kill-buffer-query-functions)
                    ;; HACK The debugger backtrace buffer, when killed, called
                    ;;      `top-level'. This causes jumpiness when the popup
@@ -45,7 +46,9 @@ the buffer is visible, then set another timer and try again later."
 + And finally deletes the window!"
   (let ((buffer (window-buffer window))
         (inhibit-quit t))
-    (and (buffer-file-name buffer)
+    (and (or (buffer-file-name buffer)
+             (if-let (base-buffer (buffer-base-buffer buffer))
+                 (buffer-file-name base-buffer)))
          (buffer-modified-p buffer)
          (let ((autosave (+popup-parameter 'autosave window)))
            (cond ((eq autosave 't))
@@ -136,6 +139,8 @@ the buffer is visible, then set another timer and try again later."
 (defun +popup--maybe-select-window (window origin)
   "Select a window based on `+popup--inhibit-select' and this window's `select' parameter."
   (unless +popup--inhibit-select
+    ;; REVIEW: Once our minimum version is bumped up to Emacs 30.x, replace this
+    ;;   with `post-command-select-window' window parameter.
     (let ((select (+popup-parameter 'select window)))
       (if (functionp select)
           (funcall select window origin)
@@ -352,7 +357,8 @@ Any non-nil value besides the above will be used as the raw value for
                                    ;; parameter, since `other-window' won't.
                                    (window-parameter w 'no-other-window)))
                    (window-list)))
-      (select-window (if (+popup-window-p)
+      (select-window (if (or (+popup-window-p)
+                             (window-parameter nil 'no-other-window))
                          (let ((window (selected-window)))
                            (or (car-safe (cdr (memq window popups)))
                                (car (delq window popups))
@@ -433,9 +439,10 @@ window and return that window."
         (+popup--inhibit-transient t)
         +popup--remember-last)
     (+popup/close window 'force)
-    (if arg
-        (pop-to-buffer buffer)
-      (switch-to-buffer buffer))
+    (let (display-buffer-alist)
+      (if arg
+          (pop-to-buffer buffer)
+        (switch-to-buffer buffer)))
     (selected-window)))
 
 ;;;###autoload
@@ -461,10 +468,10 @@ window and return that window."
   (+popup/close nil t))
 
 ;;;###autoload
-(defun +popup-save-a (orig-fn &rest args)
+(defun +popup-save-a (fn &rest args)
   "Sets aside all popups before executing the original function, usually to
 prevent the popup(s) from messing up the UI (or vice versa)."
-  (save-popups! (apply orig-fn args)))
+  (save-popups! (apply fn args)))
 
 ;;;###autoload
 (defun +popup-display-buffer-fullframe-fn (buffer alist)
@@ -500,11 +507,29 @@ Accepts the same arguments as `display-buffer-in-side-window'. You must set
           ((not (numberp vslot))
            (error "Invalid vslot %s specified" vslot)))
 
-    (let* ((major (get-window-with-predicate
+    (let* ((live (get-window-with-predicate
                    (lambda (window)
                      (and (eq (window-parameter window 'window-side) side)
                           (eq (window-parameter window 'window-vslot) vslot)))
                    nil))
+           ;; As opposed to the `window-side' property, our `window-vslot'
+           ;; parameter is set only on a single live window and never on internal
+           ;; windows. Moreover, as opposed to `window-with-parameter' (as used
+           ;; by the original `display-buffer-in-side-window'),
+           ;; `get-window-with-predicate' only returns live windows anyway. In
+           ;; any case, we will have missed the major side window and got a
+           ;; child instead if the major side window happens to be an internal
+           ;; window with multiple children. In that case, all childen should
+           ;; have the same `window-vslot' parameter, and the major side window
+           ;; is the parent of the live window.
+           (prev (and live (window-prev-sibling live)))
+           (next (and live (window-next-sibling live)))
+           (prev-vslot (and prev (window-parameter prev 'window-vslot)))
+           (next-vslot (and next (window-parameter next 'window-vslot)))
+           (major (and live
+                       (if (or (eq prev-vslot vslot) (eq next-vslot vslot))
+                           (window-parent live)
+                         live)))
            (reversed (window--sides-reverse-on-frame-p (selected-frame)))
            (windows
             (cond ((window-live-p major)
@@ -596,6 +621,7 @@ Accepts the same arguments as `display-buffer-in-side-window'. You must set
                                  (setq window
                                        (ignore-errors (split-window prev-window nil prev-side))))))
                       (set-window-parameter window 'window-slot slot)
+                      (set-window-parameter window 'window-vslot vslot)
                       (with-current-buffer buffer
                         (setq window--sides-shown t))
                       (window--display-buffer
@@ -609,18 +635,3 @@ Accepts the same arguments as `display-buffer-in-side-window'. You must set
                           (setq window--sides-shown t))
                         (window--display-buffer
                          buffer best-window 'reuse alist)))))))))
-
-
-;;
-;; Emacs backwards compatibility
-
-(unless EMACS27+
-  (defadvice! +popup--set-window-dedicated-a (window)
-    "Ensure `window--display-buffer' respects `display-buffer-mark-dedicated'.
-
-This was not so until recent Emacs 27 builds, where it causes breaking errors.
-This advice ensures backwards compatibility for Emacs <= 26 users."
-    :filter-return #'window--display-buffer
-    (when (and (windowp window) display-buffer-mark-dedicated)
-      (set-window-dedicated-p window display-buffer-mark-dedicated))
-    window))

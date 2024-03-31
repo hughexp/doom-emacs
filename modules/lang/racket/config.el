@@ -9,7 +9,6 @@
 
 (use-package! racket-mode
   :mode "\\.rkt\\'"  ; give it precedence over :lang scheme
-  :hook (racket-repl-mode . racket-unicode-input-method-enable)
   :config
   (set-repl-handler! 'racket-mode #'+racket/open-repl)
   (set-lookup-handlers! '(racket-mode racket-repl-mode)
@@ -22,22 +21,26 @@
     :dot     ".")
   (set-rotate-patterns! 'racket-mode
     :symbols '(("#true" "#false")))
+  (set-formatter! 'raco-fmt '("raco" "fmt") :modes '(racket-mode))
 
   (add-hook! 'racket-mode-hook
              #'rainbow-delimiters-mode
              #'highlight-quoted-mode)
 
-  (when (featurep! +xp)
+  (when (modulep! +lsp)
+    (add-hook 'racket-mode-local-vars-hook #'lsp! 'append))
+
+  (when (modulep! +xp)
     (add-hook 'racket-mode-local-vars-hook #'racket-xp-mode)
     ;; Both flycheck and racket-xp produce error popups, but racket-xp's are
     ;; higher quality so disable flycheck's:
-    (when (featurep! :checkers syntax)
+    (when (modulep! :checkers syntax)
       (add-hook! 'racket-xp-mode-hook
         (defun +racket-disable-flycheck-h ()
           (cl-pushnew 'racket flycheck-disabled-checkers)))))
 
-  (unless (or (featurep! :editor parinfer)
-              (featurep! :editor lispy))
+  (unless (or (modulep! :editor parinfer)
+              (modulep! :editor lispy))
     (add-hook 'racket-mode-hook #'racket-smart-open-bracket-mode))
 
   (map! (:map racket-xp-mode-map

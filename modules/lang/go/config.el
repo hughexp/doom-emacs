@@ -11,17 +11,12 @@
     :references #'go-guru-referrers
     :documentation #'godoc-at-point)
 
-  ;; Redefines default formatter to *not* use goimports if reformatting a
-  ;; region; as it doesn't play well with partial code.
-  (set-formatter! 'gofmt
-    '(("%s" (if (or +format-region-p
-                    (not (executable-find "goimports")))
-                "gofmt"
-              "goimports"))))
-
-  (if (featurep! +lsp)
-      (add-hook 'go-mode-local-vars-hook #'lsp!)
+  (if (modulep! +lsp)
+      (add-hook 'go-mode-local-vars-hook #'lsp! 'append)
     (add-hook 'go-mode-hook #'go-eldoc-setup))
+
+  (when (modulep! +tree-sitter)
+    (add-hook 'go-mode-local-vars-hook #'tree-sitter! 'append))
 
   (map! :map go-mode-map
         :localleader
@@ -53,6 +48,7 @@
           "a" #'+go/test-all
           "s" #'+go/test-single
           "n" #'+go/test-nested
+          "f" #'+go/test-file
           "g" #'go-gen-test-dwim
           "G" #'go-gen-test-all
           "e" #'go-gen-test-exported
@@ -66,13 +62,14 @@
 
 
 (use-package! company-go
-  :when (featurep! :completion company)
-  :unless (featurep! +lsp)
+  :when (modulep! :completion company)
+  :unless (modulep! +lsp)
   :after go-mode
   :config
   (set-company-backend! 'go-mode 'company-go)
   (setq company-go-show-annotation t))
 
 (use-package! flycheck-golangci-lint
-  :when (featurep! :checkers syntax)
+  :when (and (modulep! :checkers syntax)
+             (not (modulep! :checkers syntax +flymake)))
   :hook (go-mode . flycheck-golangci-lint-setup))

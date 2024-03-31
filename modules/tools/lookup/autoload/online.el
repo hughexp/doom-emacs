@@ -36,30 +36,27 @@ QUERY must be a string, and PROVIDER must be a key of
   (interactive
    (list (if (use-region-p) (doom-thing-at-point-or-region))
          (+lookup--online-provider current-prefix-arg)))
-  (let ((backend (cl-find-if (lambda (x) (or (stringp x) (fboundp x)))
-                             (cdr (assoc provider +lookup-provider-url-alist)))))
-    (unless (and (functionp backend)
-                 (funcall backend query))
-      (unless backend
-        (user-error "%S is an invalid query engine backend for %S provider"
-                    backend provider))
-      (cl-check-type backend (or string function))
-      (condition-case-unless-debug e
-          (progn
-            (unless query
-              (setq query
-                    (read-string (format "Search for (on %s): " provider)
-                                 (thing-at-point 'symbol t))))
-            (when (or (functionp backend) (symbolp backend))
-              (setq backend (funcall backend)))
-            (when (string-empty-p query)
-              (user-error "The query query is empty"))
-            (funcall +lookup-open-url-fn (format backend (url-encode-url query))))
-        (error
-         (setq +lookup--last-provider
-               (delq (assq major-mode +lookup--last-provider)
-                     +lookup--last-provider))
-         (signal (car e) (cdr e)))))))
+  (let ((backends (cdr (assoc provider +lookup-provider-url-alist))))
+    (unless backends
+      (user-error "No available online lookup backend for %S provider"
+                  provider))
+    (catch 'done
+      (dolist (backend backends)
+        (cl-check-type backend (or string function))
+        (cond ((stringp backend)
+               (funcall +lookup-open-url-fn
+                        (format backend
+                                (url-encode-url
+                                 (or query
+                                     (read-string (format "Search for (on %s): " provider)
+                                                  (thing-at-point 'symbol t)))))))
+              ((condition-case-unless-debug e
+                   (and (fboundp backend)
+                        (funcall backend query))
+                 (error
+                  (delq! major-mode +lookup--last-provider 'assq)
+                  (signal (car e) (cdr e))))
+               (throw 'done t)))))))
 
 ;;;###autoload
 (defun +lookup/online-select ()
@@ -77,12 +74,12 @@ QUERY must be a string, and PROVIDER must be a key of
 ;;;###autoload
 (defun +lookup--online-backend-google (query)
   "Search Google, starting with QUERY, with live autocompletion."
-  (cond ((fboundp 'counsel-search)
+  (cond ((and (bound-and-true-p ivy-mode) (fboundp 'counsel-search))
          (let ((ivy-initial-inputs-alist `((t . ,query)))
                (counsel-search-engine 'google))
            (call-interactively #'counsel-search)
            t))
-        ((require 'helm-net nil t)
+        ((and (bound-and-true-p helm-mode) (require 'helm-net nil t))
          (helm :sources 'helm-source-google-suggest
                :buffer "*helm google*"
                :input query)
@@ -91,7 +88,7 @@ QUERY must be a string, and PROVIDER must be a key of
 ;;;###autoload
 (defun +lookup--online-backend-duckduckgo (query)
   "Search DuckDuckGo, starting with QUERY, with live autocompletion."
-  (cond ((fboundp 'counsel-search)
+  (cond ((and (bound-and-true-p ivy-mode) (fboundp 'counsel-search))
          (let ((ivy-initial-inputs-alist `((t . ,query)))
                (counsel-search-engine 'ddg))
            (call-interactively #'counsel-search)

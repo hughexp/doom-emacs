@@ -3,13 +3,14 @@
 (defun +org--yank-html-buffer (buffer)
   (with-current-buffer buffer
     (require 'ox-clip)
-    (cond ((or IS-WINDOWS IS-MAC)
+    (cond ((or (featurep :system 'windows)
+               (featurep :system 'macos))
            (shell-command-on-region
             (point-min)
             (point-max)
-            (cond (IS-WINDOWS ox-clip-w32-cmd)
-                  (IS-MAC     ox-clip-osx-cmd))))
-          (IS-LINUX
+            (cond ((featurep :system 'windows) ox-clip-w32-cmd)
+                  ((featurep :system 'macos)   ox-clip-osx-cmd))))
+          ((featurep :system 'linux)
            (let ((html (buffer-string)))
              (with-temp-file (make-temp-file "ox-clip-md" nil ".html")
                (insert html))
@@ -26,12 +27,14 @@
 
 Prompts for what BACKEND to use. See `org-export-backends' for options."
   (interactive
-   (list (intern (completing-read "Export to: " org-export-backends))))
-  (let ((buffer (org-export-to-buffer backend "*Formatted Copy*" nil nil t t)))
+   (list (intern (completing-read "Export to: " (progn (require 'ox) org-export-backends)))))
+  (require 'ox)
+  (let* ((org-export-show-temporary-export-buffer nil)
+         (buffer (org-export-to-buffer backend "*Formatted Copy*" nil nil t t)))
     (unwind-protect
         (with-current-buffer buffer
           (kill-new (buffer-string)))
-      (kill-buffer (current-buffer)))))
+      (kill-buffer buffer))))
 
 ;;;###autoload
 (defun +org/export-to-clipboard-as-rich-text (beg end)
@@ -44,4 +47,8 @@ properties and font-locking et all)."
   (pcase major-mode
     ((or `markdown-mode `gfm-mode)
      (+org--yank-html-buffer (markdown)))
-    (_ (ox-clip-formatted-copy beg end))))
+    (_
+     ;; Omit after/before-string overlay properties in htmlized regions, so we
+     ;; don't get fringe characters for things like flycheck or git-gutter.
+     (letf! (defun htmlize-add-before-after-strings (_beg _end text) text)
+       (ox-clip-formatted-copy beg end)))))

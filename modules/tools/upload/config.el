@@ -7,7 +7,7 @@
 ;; Example:
 ;;   ((nil . ((ssh-deploy-root-local . "/local/path/to/project")
 ;;            (ssh-deploy-root-remote . "/ssh:user@server:/remote/project/")
-;;            (ssh-deploy-on-explicity-save . t))))
+;;            (ssh-deploy-on-explicit-save . 1))))
 ;;
 ;; Note: `ssh-deploy-root-local' is optional, and will resort to
 ;; `doom-project-root' if unspecified.
@@ -20,14 +20,15 @@
              ssh-deploy-remote-changes-handler)
   :init
   (setq ssh-deploy-revision-folder (concat doom-cache-dir "ssh-revisions/")
-        ssh-deploy-on-explicit-save t
+        ssh-deploy-on-explicit-save 1
         ssh-deploy-automatically-detect-remote-changes nil)
 
   ;; Make these safe as file-local variables
   (dolist (sym '((ssh-deploy-root-local . stringp)
                  (ssh-deploy-root-remote . stringp)
                  (ssh-deploy-script . functionp)
-                 (ssh-deploy-on-explicitly-save . booleanp)
+                 (ssh-deploy-on-explicit-save . booleanp)
+                 (ssh-deploy-force-on-explicit-save . booleanp)
                  (ssh-deploy-async . booleanp)
                  (ssh-deploy-exclude-list . listp)))
     (put (car sym) 'safe-local-variable (cdr sym)))
@@ -36,8 +37,9 @@
   (add-hook! 'after-save-hook
     (defun +upload-init-after-save-h ()
       (when (and (bound-and-true-p ssh-deploy-root-remote)
-                 ssh-deploy-on-explicit-save)
-        (ssh-deploy-upload-handler))))
+                 (integerp ssh-deploy-on-explicit-save)
+                 (> ssh-deploy-on-explicit-save 0))
+        (ssh-deploy-upload-handler ssh-deploy-force-on-explicit-save))))
 
   ;; Enable ssh-deploy if variables are set, and check for changes on open file
   ;; (if possible)

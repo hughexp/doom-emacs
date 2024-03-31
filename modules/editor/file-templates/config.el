@@ -8,6 +8,9 @@
   "The default yasnippet trigger key (a string) for file template rules that
 don't have a :trigger property in `+file-templates-alist'.")
 
+(defvar +file-templates-inhibit nil
+  "If non-nil, inhibit file template expansion.")
+
 (defvar +file-templates-alist
   '(;; General
     (gitignore-mode)
@@ -15,7 +18,10 @@ don't have a :trigger property in `+file-templates-alist'.")
     ("/docker-compose\\.yml$" :mode yaml-mode)
     ("/Makefile$"             :mode makefile-gmake-mode)
     ;; elisp
-    ("/.dir-locals.el$")
+    ("/\\.dir-locals\\.el$")
+    ("/\\.doomrc$"
+     :trigger "__doomrc"
+     :mode emacs-lisp-mode)
     ("/packages\\.el$" :when +file-templates-in-emacs-dirs-p
      :trigger "__doom-packages"
      :mode emacs-lisp-mode)
@@ -57,7 +63,6 @@ don't have a :trigger property in `+file-templates-alist'.")
     ("/bower\\.json$"          :trigger "__bower.json" :mode json-mode)
     ("/gulpfile\\.js$"         :trigger "__gulpfile.js" :mode js-mode)
     ("/webpack\\.config\\.js$" :trigger "__webpack.config.js" :mode js-mode)
-    ("\\.js\\(?:on\\|hintrc\\)$" :mode json-mode)
     ;; Lua
     ("/main\\.lua$" :trigger "__main.lua" :mode love-mode)
     ("/conf\\.lua$" :trigger "__conf.lua" :mode love-mode)
@@ -69,9 +74,8 @@ don't have a :trigger property in `+file-templates-alist'.")
     ("/shell\\.nix$" :trigger "__shell.nix")
     (nix-mode)
     ;; Org
-    ("/README\\.org$"
-     :when +file-templates-in-emacs-dirs-p
-     :trigger "__doom-readme"
+    (doom-docs-org-mode
+     :trigger +file-templates-insert-doom-docs-fn
      :mode org-mode)
     (org-journal-mode :ignore t)
     (org-mode)
@@ -92,7 +96,7 @@ don't have a :trigger property in `+file-templates-alist'.")
     ("/Rakefile$"         :trigger "__Rakefile" :mode ruby-mode :project t)
     (ruby-mode)
     ;; Rust
-    ("/Cargo.toml$" :trigger "__Cargo.toml" :mode rust-mode)
+    ("/Cargo\\.toml$" :trigger "__Cargo.toml" :mode rust-mode)
     ("/main\\.rs$" :trigger "__main.rs" :mode rust-mode)
     ;; Slim
     ("/\\(?:index\\|main\\)\\.slim$" :mode slim-mode)
@@ -112,7 +116,7 @@ information.")
 
 (defun +file-templates-in-emacs-dirs-p (file)
   "Returns t if FILE is in Doom or your private directory."
-  (or (file-in-directory-p file doom-private-dir)
+  (or (file-in-directory-p file doom-user-dir)
       (file-in-directory-p file doom-emacs-dir)))
 
 (defun +file-template-p (rule)
@@ -133,12 +137,15 @@ information.")
   "Check if the current buffer is a candidate for file template expansion. It
 must be non-read-only, empty, and there must be a rule in
 `+file-templates-alist' that applies to it."
-  (and buffer-file-name
-       (not buffer-read-only)
-       (bobp) (eobp)
-       (not (member (substring (buffer-name) 0 1) '("*" " ")))
-       (not (file-exists-p buffer-file-name))
-       (not (buffer-modified-p))
+  (and (not +file-templates-inhibit)
+       buffer-file-name        ; this buffer represents a file and
+       (not buffer-read-only)  ; ...isn't read-only
+       (bobp) (eobp)           ; ...is empty
+       (not (member (substring (buffer-name) 0 1) '("*" " ")))  ; ...isn't a "special" buffer
+       (not (bound-and-true-p org-capture-current-plist))  ; ...isn't an org-capture buffer
+       (not (file-exists-p buffer-file-name))  ; ...is a new file
+       (not (buffer-modified-p))    ; ...hasn't been modified
+       (null (buffer-base-buffer))  ; ...isn't an indirect clone
        (when-let (rule (cl-find-if #'+file-template-p +file-templates-alist))
          (apply #'+file-templates--expand rule))))
 
@@ -147,7 +154,7 @@ must be non-read-only, empty, and there must be a rule in
 ;;; Bootstrap
 
 (after! yasnippet
-  (if (featurep! :editor snippets)
+  (if (modulep! :editor snippets)
       (add-to-list 'yas-snippet-dirs '+file-templates-dir 'append #'eq)
     (setq yas-prompt-functions (delq #'yas-dropdown-prompt yas-prompt-functions)
           yas-snippet-dirs '(+file-templates-dir))

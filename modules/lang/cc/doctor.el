@@ -1,9 +1,13 @@
 ;; -*- lexical-binding: t; no-byte-compile: t; -*-
 ;;; lang/cc/doctor.el
 
-(assert! (or (not (featurep! +lsp))
-             (featurep! :tools lsp))
+(assert! (or (not (modulep! +lsp))
+             (modulep! :tools lsp))
          "This module requires (:tools lsp)")
+
+(assert! (or (not (modulep! +tree-sitter))
+             (modulep! :tools tree-sitter))
+         "This module requires (:tools tree-sitter)")
 
 (when (require 'rtags nil t)
   ;; rtags
@@ -18,7 +22,11 @@
   (unless (file-directory-p irony-server-install-prefix)
     (warn! "Irony server isn't installed. Run M-x irony-install-server")))
 
-(when (featurep! :completion company)
+(when (modulep! :completion company)
   ;; glslangValidator
   (unless (executable-find "glslangValidator")
     (warn! "Couldn't find glslangValidator. GLSL code completion is disabled")))
+
+(when (modulep! :editor format)
+  (unless (executable-find "clang-format")
+    (warn! "Couldn't find clang-format. Formatting will be disabled.")))

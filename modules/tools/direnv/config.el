@@ -1,65 +1,41 @@
 ;;; tools/direnv/config.el -*- lexical-binding: t; -*-
 
-(defvar +direnv-keywords
-  '("direnv_layout_dir" "PATH_add" "path_add" "log_status" "log_error" "has"
-    "join_args" "expand_path" "dotenv" "user_rel_path" "find_up" "source_env"
-    "watch_file" "source_up" "direnv_load" "MANPATH_add" "load_prefix" "layout"
-    "use" "rvm" "use_nix" "use_guix")
-  "A list of direnv keywords, which are fontified when in `+direnv-rc-mode'.")
-
-
-;;
-;;; Packages
-
 (use-package! envrc
-  :when (executable-find "direnv")
-  :after-call doom-first-file-hook
-  :mode ("\\.envrc\\'" . +direnv-rc-mode)
+  :hook (doom-first-file . envrc-global-mode)
   :config
   (add-to-list 'doom-debug-variables 'envrc-debug)
 
-  ;; I'm avoiding `global-envrc-mode' intentionally, because it has the
-  ;; potential to run too late in the mode startup process (and after, say,
-  ;; server hooks that may rely on that local direnv environment).
-  (add-hook! 'change-major-mode-after-body-hook
-    (defun +direnv-init-h ()
-      (unless (or envrc-mode
-                  (minibufferp)
-                  (file-remote-p default-directory))
-        (envrc-mode 1))))
+  (set-popup-rule! "^\\*envrc\\*" :quit t :ttl 0)
 
-  (define-derived-mode +direnv-rc-mode sh-mode "envrc"
-    "Major mode for .envrc files."
-    ;; Fontify .envrc keywords; it's a good indication of whether or not we've
-    ;; typed them correctly, and that we're in the correct major mode.
-    (font-lock-add-keywords
-     nil `((,(regexp-opt +direnv-keywords 'symbols)
-            (0 font-lock-keyword-face)))))
+  ;; HACK: Normally, envrc updates on `after-change-major-mode-hook' (runs after
+  ;;   a major mode's body and hooks). IMHO, this is too late; a mode's hooks
+  ;;   might depend on environmental state that direnv sets up (e.g. starting an
+  ;;   LSP server that expects project-specific envvars), so I move it to
+  ;;   `change-major-mode-after-body-hook' instead, which runs before said
+  ;;   hooks, but not the body.
+  (add-hook! 'envrc-global-mode-hook
+    (defun +direnv-init-global-mode-earlier-h ()
+      (let ((fn #'envrc-global-mode-enable-in-buffers))
+        (if (not envrc-global-mode)
+            (remove-hook 'change-major-mode-after-body-hook fn)
+          (remove-hook 'after-change-major-mode-hook fn)
+          (add-hook 'change-major-mode-after-body-hook fn 100)))))
+
+  ;; ...However, the above hack causes envrc to trigger in its own, internal
+  ;; buffers, causing extra direnv errors.
+  (defadvice! +direnv--debounce-update-a (&rest _)
+    "Prevent direnv from running multiple times, consecutively in a buffer."
+    :before-while #'envrc--update
+    (not (string-prefix-p "*envrc" (buffer-name))))
 
   (defadvice! +direnv--fail-gracefully-a (&rest _)
     "Don't try to use direnv if the executable isn't present."
-    :before-while #'envrc-mode
-    (or (executable-find "direnv")
-        (ignore (doom-log "Couldn't find direnv executable"))))
+    :before-while #'envrc-global-mode
+    (or (executable-find envrc-direnv-executable)
+        (ignore (doom-log "Failed to locate direnv executable; aborting envrc-global-mode"))))
 
-  ;; HACK envrc-mode only affects the current buffer's environment, which is
-  ;;      generally what we want, except when we're running babel blocks in
-  ;;      org-mode, because there may be state or envvars those blocks need to
-  ;;      read. In order to perpetuate the org buffer's environment into the
-  ;;      execution of the babel block we need to temporarily change the global
-  ;;      environment. Let's hope it runs quickly enough that its effects aren't
-  ;;      felt in other buffers in the meantime!
-  (defvar +direnv--old-environment nil)
-  (defadvice! +direnv-persist-environment-a (orig-fn &rest args)
-    :around #'org-babel-execute-src-block
-    (if +direnv--old-environment
-        (apply orig-fn args)
-      (setq-default +direnv--old-environment
-                    (cons (default-value 'process-environment)
-                          (default-value 'exec-path))
-                    exec-path exec-path
-                    process-environment process-environment)
-      (unwind-protect (apply orig-fn args)
-        (setq-default process-environment (car +direnv--old-environment)
-                      exec-path (cdr +direnv--old-environment)
-                      +direnv--old-environment nil)))))
+  ;; Ensure babel's execution environment matches the host buffer's.
+  (advice-add #'org-babel-execute-src-block :around #'envrc-propagate-environment)
+
+  ;; Make sure any envrc changes are propagated after a `doom/reload'
+  (add-hook 'doom-after-reload-hook #'envrc-reload-all))

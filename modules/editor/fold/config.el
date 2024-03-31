@@ -1,6 +1,6 @@
 ;;; editor/fold/config.el -*- lexical-binding: t; -*-
 
-(when (featurep! :editor evil)
+(when (modulep! :editor evil)
   ;; Add vimish-fold, outline-mode & hideshow support to folding commands
   (define-key! 'global
     [remap evil-toggle-fold]   #'+fold/toggle
@@ -9,9 +9,14 @@
     [remap evil-open-fold-rec] #'+fold/open
     [remap evil-close-folds]   #'+fold/close-all
     [remap evil-open-folds]    #'+fold/open-all)
-  (evil-define-key* 'motion 'global
-    "zj" #'+fold/next
-    "zk" #'+fold/previous))
+  (after! evil
+    (evil-define-key* 'motion 'global
+      "zj" #'+fold/next
+      "zk" #'+fold/previous
+      "zf" #'evil-vimish-fold/create
+      "zF" #'evil-vimish-fold/create-line
+      "zd" #'vimish-fold-delete
+      "zE" #'vimish-fold-delete-all)))
 
 
 ;;
@@ -71,17 +76,25 @@
 
 
 (use-package! evil-vimish-fold
-  :when (featurep! :editor evil)
+  :when (modulep! :editor evil)
   :commands (evil-vimish-fold/next-fold evil-vimish-fold/previous-fold
              evil-vimish-fold/delete evil-vimish-fold/delete-all
              evil-vimish-fold/create evil-vimish-fold/create-line)
   :init
   (setq vimish-fold-dir (concat doom-cache-dir "vimish-fold/")
         vimish-fold-indication-mode 'right-fringe)
-  (evil-define-key* 'motion 'global
-    "zf" #'evil-vimish-fold/create
-    "zF" #'evil-vimish-fold/create-line
-    "zd" #'vimish-fold-delete
-    "zE" #'vimish-fold-delete-all)
   :config
   (vimish-fold-global-mode +1))
+
+(use-package! ts-fold
+  :when (modulep! :tools tree-sitter)
+  :after tree-sitter
+  :config
+  ;; we want to use our own face so we nullify this one to have no effect and
+  ;; make it more similar to hideshows
+  (custom-set-faces! '(ts-fold-replacement-face :foreground unspecified
+                                                :box nil
+                                                :inherit font-lock-comment-face
+                                                :weight light))
+  (setq ts-fold-replacement "  [...]  ")
+  (ts-fold-mode +1))

@@ -10,12 +10,13 @@
   (setq-hook! 'restclient-mode-hook
     imenu-generic-expression '((nil "^[A-Z]+\s+.+" 0)))
 
-  (defadvice! +rest--permit-self-signed-ssl-a (orig-fn &rest args)
+  (defadvice! +rest--permit-self-signed-ssl-a (fn &rest args)
     "Forces underlying SSL verification to prompt for self-signed or invalid
 certs, rather than reject them silently."
     :around #'restclient-http-do
-    (let (gnutls-verify-error tls-checktrust)
-      (apply orig-fn args)))
+    (require 'gnutls)
+    (let (gnutls-verify-error)
+      (apply fn args)))
 
   (map! :map restclient-mode-map
         :n [return] #'+rest/dwim-at-point
@@ -30,6 +31,16 @@ certs, rather than reject them silently."
 
 
 (use-package! company-restclient
-  :when (featurep! :completion company)
+  :when (modulep! :completion company)
   :after restclient
   :config (set-company-backend! 'restclient-mode 'company-restclient))
+
+
+(use-package! restclient-jq
+  :when (modulep! +jq)
+  :after restclient)
+
+
+(use-package! jq-mode
+  :when (modulep! +jq)
+  :after restclient-jq)
